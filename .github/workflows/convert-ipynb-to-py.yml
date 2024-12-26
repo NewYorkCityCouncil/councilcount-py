@@ -1,0 +1,38 @@
+name: Convert Jupyter Notebooks to Python Scripts in Scripts Folder
+
+on:
+  push:
+    paths:
+      - '**/*.ipynb'
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v3
+      with:
+        python-version: '3.x'  # Set to your required Python version
+
+    - name: Install nbconvert
+      run: pip install nbconvert
+
+    - name: Convert all Jupyter notebooks to Python scripts inside 'scripts' directory
+      run: |
+        find . -name '*.ipynb' | while read notebook; do
+          dir=$(dirname "$notebook")
+          mkdir -p "$dir/scripts"
+          jupyter nbconvert --to script "$notebook" --output-dir="$dir/scripts"
+        done
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git add -A
+        git commit -m "Convert Jupyter Notebooks to Python Scripts inside 'scripts' directory" || echo "No changes to commit"
+        git push
