@@ -1,4 +1,15 @@
+import subprocess
+import sys
 from setuptools import setup, find_packages
+
+try:
+    subprocess.check_call(["gdal-config", "--version"])
+except FileNotFoundError:
+    sys.stderr.write(
+        "Error: GDAL is required to install this package. "
+        "Please install GDAL and ensure gdal-config is available in your PATH.\n"
+    )
+    sys.exit(1)
 
 setup(
     name="councilcount",
