@@ -1,3 +1,5 @@
+# Installation
+
 To install `councilcount` for Python, please use the following code:
 
 ``` python
@@ -5,12 +7,12 @@ To install `councilcount` for Python, please use the following code:
 import councilcount as cc
 ```
 
-## Prerequisites
+# Prerequisites
 
 - Python version 3.9 or above is needed.
-- Before installing `councilcount`, ensure you have GDAL installed. You can install GDAL using the following methods:
+- GDAL
 
-# GDAL Installation Instructions
+## GDAL Installation Instructions
 
 To use the `councilcount` package, GDAL must be installed on your system. Please follow the instructions below based on your operating system.
 
