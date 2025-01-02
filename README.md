@@ -2,8 +2,11 @@
 
 To install `councilcount` for Python, please use the following code:
 
+``` bash
+pip install councilcount
+```
+
 ``` python
-!pip install councilcount
 import councilcount as cc
 ```
 
