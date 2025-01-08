@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-import geopandas as gpd
+import geojson
 from importlib.resources import files
 from warnings import warn
 
@@ -58,7 +58,12 @@ def get_geo_estimates(acs_year=None, geo=None, var_codes="all", boundary_year=No
             geo_df = pd.read_csv(file_path)
         else:
             file_path = f'{data_path}/{geo}-geographies{add_boundary_year}_{acs_year}.geojson'
-            geo_df = gpd.read_file(file_path).set_crs(epsg=2263)
+            
+            with open(file_path) as f:
+                gj = geojson.load(f)
+
+            features = gj['features']
+            geo_df = pd.json_normalize([feature['properties'] for feature in features])
 
         # if list of variable codes requested, subset
         if var_codes == "all": 
@@ -90,12 +95,12 @@ def get_geo_estimates(acs_year=None, geo=None, var_codes="all", boundary_year=No
                     # updating master column list
                     master_col_list.extend(var_col_list)
 
-            if geo == 'city':
-                geo_df = geo_df[master_col_list] # adding all desired columns
-            else: 
-                geo_df = geo_df[master_col_list + ['geometry']] # adding all desired columns + geometry column 
+            # if geo == 'city':
+            #     geo_df = geo_df[master_col_list] # adding all desired columns
+            # else: 
+            #     geo_df = geo_df[master_col_list + ['geometry']] # adding all desired columns + geometry column 
                     
-            return geo_df 
+            return geo_df[master_col_list]
 
     # check input cases
     if acs_year is None:
