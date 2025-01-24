@@ -3,22 +3,30 @@ from importlib.resources import files
 import pandas as pd
 
 def get_bbl_estimates(year=None):
+    
     """
     Produces a dataframe containing BBL-level population estimates for a specified year.
 
     Parameters:
-    year (str): The desired year for BBL-level estimates. If None, the most recent year available will be used.
+    -----------
+    year : str
+        The desired year for BBL-level estimates. If None, the most recent year available will be used.
 
     Returns:
-    pandas.DataFrame: A table with population estimates by BBL ('bbl_population_estimate' column). 
-                      The df includes latitude, longitude, and census tract columns. Use these columns
-                      to add any other geographies via .sjoin(). This will allow for the aggregation of 
-                      population numbers to any desired geography. Avoid using estimates for individual
-                      BBLs; the more aggregation, the less error. Population numbers were estimated by
-                      multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres' specifies
-                      the number of residential units present at each BBL, and 'ct_population_density' 
-                      represents the division of the total population by the total number of residential
-                      units in each census tract.
+    --------
+    pandas.DataFrame: 
+        A table with population estimates by BBL ('bbl_population_estimate' column). 
+        
+    Notes:
+    ------
+        - The df include multiple geography columns. This will allow for the aggregation of 
+        population numbers to various geographic levels. 
+        - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
+        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
+        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
+        density for units in each tract (division of the total population by the total number of residential units in each census
+        tract).
+        
     """
     if year: year = str(year) # so don't get error if accidentally input wrong dtype
 

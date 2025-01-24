@@ -3,22 +3,27 @@ from importlib.resources import files
 import pandas as pd
 
 def get_ACS_variables(acs_year=None):
+    
     """
     Retrieve the available ACS demographic variables and their codes for a specified survey year.
 
     Parameters:
-    acs_year (str): Desired 5-Year ACS year (e.g., for the 2017-2021 5-Year ACS, enter "2021").
-                    If None, the most recent year available will be used.
+    -----------
+    acs_year : str
+        Desired 5-Year ACS year (e.g., for the 2017-2021 5-Year ACS, enter "2021"). If None, the most recent year available will
+        be used.
 
     Returns:
-    pd.DataFrame: Table of available variables with columns for variable code, variable name, 
-                  denominator code, and denominator name (the "denominator variable" is the 
-                  denominator population in percent estimate calculations). Use desired variable 
-                  code(s) as the input for `var_codes` in the get_geo_estimates() function to obtain 
-                  demographic estimates.
+    --------
+    pd.DataFrame: 
+        Table of available variables with columns for variable code, variable name, denominator code, and denominator name.
+        
+    Notes:
+    ------
+        - The "denominator variable" is the denominator population in percent estimate calculations. 
+        - Use desired variable code(s) as the input for `var_codes` in the `get_geo_estimates()` function to obtain demographic
+        estimates.
 
-    Raises:
-    ValueError: If the requested year is not available.
     """
     
     if acs_year: acs_year = str(acs_year) # so don't get error if accidentally input wrong dtype

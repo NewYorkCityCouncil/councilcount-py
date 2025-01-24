@@ -13,10 +13,10 @@ from setuptools import setup, find_packages
 
 setup(
     name="councilcount",
-    version="1.0.5",
+    version="2.0.1",
     author="Rachel Avram",
     author_email="ravram@council.nyc.gov",
-    description="The `councilcount` package allows easy access to ACS population data across various geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided.",
+    description="The `councilcount` package allows easy access to ACS population data across various geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided. Visit https://github.com/NewYorkCityCouncil/councilcount-py/tree/main to review available functions.",
     packages=find_packages(),
     include_package_data=True,  # Ensure data files are included
     package_data={
@@ -24,24 +24,25 @@ setup(
     },
     python_requires=">=3.9",
     install_requires=[
+        'certifi==2024.12.14',
+        'charset-normalizer==3.4.1',
         'geojson==3.2.0',
-        'numpy==1.26.4', #'numpy==2.2.1',
+        'idna==3.10',
+        'numpy==1.26.4', #'numpy==2.2.2',
         'pandas==2.2.3',
         'python-dateutil==2.9.0.post0',
         'pytz==2024.2',
+        'requests==2.32.3',
         'six==1.17.0',
-        'tzdata==2024.2'
-        # 'certifi==2024.8.30',
-        # 'geopandas==1.0.1',
-        # 'numpy==1.26.4',
-        # 'packaging==24.2',
+        'tzdata==2025.1',
+        'urllib3==2.3.0'
+        # 'geojson==3.2.0',
+        # 'numpy==1.26.4', #'numpy==2.2.1',
         # 'pandas==2.2.3',
-        # 'pyogrio==0.10.0',
-        # 'pyproj==3.6.1',
         # 'python-dateutil==2.9.0.post0',
         # 'pytz==2024.2',
-        # 'shapely==2.0.6',
-        # 'six==1.16.0',
+        # 'six==1.17.0',
         # 'tzdata==2024.2'
     ],
 )
+
