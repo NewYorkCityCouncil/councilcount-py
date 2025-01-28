@@ -1,5 +1,5 @@
 import numpy as np
-from estimates import _reorder_columns
+from .estimates import _reorder_columns
 
 def calc_percent_MOE(geo_df, num_code, denom_code): 
     

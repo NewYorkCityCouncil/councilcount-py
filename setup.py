@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="councilcount",
-    version="2.0.4",
+    version="2.0.5",
     description="The `councilcount` package allows easy access to ACS population data across various NYC geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
@@ -13,7 +13,7 @@ setup(
     packages=find_packages(where="src"),
     package_dir={"": "src"},
     package_data={
-        "councilcount": ["data/*.csv", "data/*.geojson"],
+        "councilcount": ["data-council-logo.png", "data/*.csv", "data/*.geojson"],
     },
     classifiers=[
         "Programming Language :: Python :: 3",
@@ -38,6 +38,5 @@ setup(
     # Include any other URLs such as BugTracker, Documentation if needed
     project_urls={
         "Bug Tracker": "https://github.com/NewYorkCityCouncil/councilcount-py/issues",
-        # "Documentation": "https://councilcount.readthedocs.io",
     },
 )

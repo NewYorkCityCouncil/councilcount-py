@@ -1,4 +1,4 @@
-![CouncilCount Logo](https://github.com/NewYorkCityCouncil/councilcount-py/blob/main/data-council-logo.png)
+![CouncilCount Logo](data-council-logo.png)
 
 # Overview
 
@@ -44,7 +44,7 @@ Council District boundaries for the 2018-2022 ACS.
 
 First, review the codes available in the CouncilCount database:
 ```Python
-acs_year = "2022"
+acs_year = 2022
 cc.get_available_councilcount_codes(acs_year=acs_year)
 ```
 
@@ -55,7 +55,7 @@ vars = [
 "DP02_0068E" # Adults with Bachelor’s degree or higher
 ]
 geo = "councildist" # "councildist", "policeprct", "schooldist", "nta", "communitydist", "borough", and "city" are acceptable inputs
-boundary_year = "2023" # only necesary for Council District requests—2013 and 2023 are accetable inputs
+boundary_year = 2023 # only necesary for Council District requests—2013 and 2023 are accetable inputs
 
 cc.get_councilcount_estimates(acs_year=acs_year, geo=geo, var_codes=vars, boundary_year=boundary_year) 
 ```
@@ -77,7 +77,7 @@ Here is an example in which new estimates are created. The data is requested alo
     
 First, review the codes available in the CouncilCount database. Generate your own census API key [here](https://api.census.gov/data/key_signup.html):
 ```Python
-acs_year = "2023"
+acs_year = 2022
 census_api_key = "<INSERT KEY>"
 cc.get_census_api_codes(acs_year=acs_year, census_api_key=census_api_key)
 ```
@@ -104,7 +104,7 @@ Drawing on the data generated in the previous example, let's create a custom per
     
 ```Python
 # generating the percent estimate manually (codes ending in "PE" represent persent estimates, so name the new column accordingly).   
-table["DP02_0026PE"] = 100*table["DP02_0026E"] / table["DP02_0025E"] 
+table["DP02_0026PE"] = (100*table["DP02_0026E"] / table["DP02_0025E"]).round(2) 
 # generating the percent MOE      
 cc.calc_percent_MOE(geo_df=table, num_code="DP02_0026E", denom_code="DP02_0025E")    
 ```   
