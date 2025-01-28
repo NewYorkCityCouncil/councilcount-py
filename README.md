@@ -100,7 +100,7 @@ Other functions:
 
 * `calc_percent_MOE()`: Calculates the percent MOE that results from dividing a numerator MOE by a denominator MOE, based on the Census Bureau's formula for doing so. Can be used to generate percent MOEs when making custom percent estimates.   
 
-Drawing on the data generated in the previous example, let's create a custom percent estimate by dividing "DP02_0026E" (never married males 15 and over) by "DP02_0025E" (males 15 and over). This will create estimates of the percent of males 15 and over that have never been married. In order to preserve reliability information (aka MOE), use `calc_percent_MOE()` to add a percent MOE column (this is not as easy as simply dividing the two variables' MOEs, so the function takes care of the math for you).
+Drawing on the data generated in the previous example, let's create a custom percent estimate by dividing "DP02_0026E" (never married males 15 and over) by "DP02_0025E" (males 15 and over). This will create estimates of the percent of males 15 and over that have never been married. In order to preserve reliability information (aka MOE), use `calc_percent_MOE()` to add a percent MOE column (this is not as easy as simply dividing the two variables' MOEs, so the function takes care of the math for you). In order for the function to work, there must be existing MOE columns (in this case, "DP02_0025M" and "DP02_0025M") in the DF.
     
 ```Python
 # generating the percent estimate manually (codes ending in "PE" represent persent estimates, so name the new column accordingly).   
