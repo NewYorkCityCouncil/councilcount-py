@@ -1,4 +1,4 @@
-![CouncilCount Logo](data-council-logo.png)
+![CouncilCount Logo](https://github.com/NewYorkCityCouncil/councilcount-py/blob/main/data-council-logo.png)
 
 # Overview
 
