@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="councilcount",
-    version="2.0.6",
+    version="2.0.7",
     description="The `councilcount` package allows easy access to ACS population data across various NYC geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",

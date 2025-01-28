@@ -8,11 +8,12 @@ from warnings import warn
 
 ######## HELPER FUNCTIONS
 
-def _pull_raw_census_data(acs_year, census_year, var_code_list, census_api_key):
+def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_api_key):
     
     """
-    Fetches American Community Survey (ACS) data from the U.S. Census Bureau API and processes it into a pandas DataFrame. Used by
-    `_generate_bbl_estimates()` and `_generate_bbl_variances()`.
+    Fetches American Community Survey (ACS) data from the U.S. Census Bureau API and processes it into a pandas DataFrame. Used
+    by `_generate_bbl_estimates()`, `_generate_bbl_variances()`, and `generate_new_estimates()`. Can be aggregated to geographies
+    in the census hierachy, including census tract, neighborhood tabulation area, borough, and New York City.
 
     Parameters:
     -----------
@@ -23,6 +24,8 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, census_api_key):
         before 2020 but after 2010. Enter '2020' for surveys 2020 and above.
     var_code_list : list of str
         A list of variable codes to retrieve from the ACS dataset (e.g., ['DP03_0045E', 'DP03_0032E']).
+    level : str
+        The level of geographic aggregation desired (options include 'tract', 'nta', 'borough', and 'city')
     census_api_key : str
         A valid API key for accessing the U.S. Census Bureau's API.
 
@@ -42,11 +45,23 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, census_api_key):
     base_url = "https://api.census.gov/data"
     dataset = "acs/acs5/profile"  # ACS 5-year dataset
     variables = ",".join(var_code_list)  # Concatenate variables into a comma-separated string
-    tract = '*' # all tracts
-    counties = "005,047,081,085,061" # New York counties
     state = "36"  # New York state
-
-    url = f'{base_url}/{acs_year}/{dataset}?get={variables}&for=tract:{tract}&in=state:{state}&in=county:{counties}&key={census_api_key}'
+    
+    # setting values based on geography level chosen
+    if level == 'city': 
+        for_code = "place:51000" # NYC code
+    elif level == 'borough': 
+        for_code = "county:005,047,061,081,085" # county codes for NYC boroughs
+        # to match counties to boroughs
+        conversion_dict = {'5': 'The Bronx', '47': 'Brooklyn', '61': 'Manhattan', '81': 'Queens', '85': 'Staten Island'} 
+    elif level in ['tract', 'nta']: 
+        for_code = 'tract:*&in=county:005,047,061,081,085' # all NYC census tracts
+        if level == 'nta':
+            # to help build NTAs out of census tracts
+            nta_conversion = pd.read_csv('../src/councilcount/data/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
+            conversion_dict = pd.Series(nta_conversion['NTACode'].values,index=nta_conversion['GEOID'].astype(str)).to_dict() 
+        
+    url = f'{base_url}/{acs_year}/{dataset}?get={variables}&for={for_code}&in=state:{state}&key={census_api_key}'
     response = requests.get(url)
 
     # check the response
@@ -55,10 +70,45 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, census_api_key):
             data = response.json()  # attempt to parse JSON response
             demo_df = pd.DataFrame(data[1:], columns=data[0]) # first row is the header
             demo_df[var_code_list] = demo_df[var_code_list].astype(int) # setting dtype
-            # create unique identifier for each tract (some counties have duplicate census tract names)
-            demo_df[f'{census_year}_tract_id'] = demo_df['tract'].astype(int).astype(str) + '-' + demo_df['county'].astype(int).astype(str)
-            # dropping unneeded columns
-            demo_df = demo_df.drop(columns=['state', 'county', 'tract'])
+            
+            if level == 'tract':
+                # create unique identifier for each tract (some counties have duplicate census tract names)
+                demo_df[f'{census_year}_tract_id'] = demo_df['tract'].astype(int).astype(str) + '-' + demo_df['county'].astype(int).astype(str)
+                demo_df = demo_df.drop(columns=['state', 'county', 'tract'])
+            elif level == 'nta':
+                # pair census tract GEOIDs to corresponding NTA
+                demo_df['geoid'] = demo_df['state'] + demo_df['county'] + demo_df['tract']
+                demo_df[level] = demo_df['geoid'].map(conversion_dict)
+                demo_df = demo_df.drop(columns=['state', 'county', 'tract', 'geoid'])
+                # census formula -> to aggregate multiple MOEs, sqrt the sum of all MOEs squared
+                MOE_columns = [col for col in demo_df.columns if col[-1] == 'M'] # isolating the MOE columns
+                demo_df[MOE_columns] = demo_df[MOE_columns]**2 # squaring MOE columns
+                # aggregating estimates and MOE from tract-level to nta-level
+                demo_df = demo_df.groupby(level).sum().reset_index()
+                demo_df[MOE_columns] = np.sqrt(demo_df[MOE_columns]).round().astype(int) # sqrt the sum of all MOEs squared                     
+                # creating column with NTA full names (need to pull in df with both names and codes)
+                data_path = files("councilcount").joinpath("data") # setting path
+                file_path = f'{data_path}/nta-boundaries.geojson'
+                with open(file_path) as f: df = geojson.load(f)
+                features = df["features"]
+                df = pd.json_normalize([feature["properties"] for feature in features])
+                # second conversion
+                nta_names = dict(zip(neighborhood_geographies['nta2020'],neighborhood_geographies['ntaname']))
+                demo_df['ntaname'] = demo_df[level].map(nta_names)                      
+                demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning  
+                demo_df.insert(1, 'ntaname', demo_df.pop('ntaname'))
+            elif level == 'borough':
+                # pair county FIPS code to borough name
+                demo_df['county'] = demo_df['county'].astype(int).astype(str)
+                demo_df[level] = demo_df['county'].map(conversion_dict)
+                demo_df = demo_df.drop(columns=['state', 'county'])
+                demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning  
+            elif level == 'city':
+                # renaming columns
+                demo_df['place'] = 'New York City'
+                demo_df = demo_df.drop(columns=['state']).rename(columns={'place':'city'})
+                demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning 
+                
         except Exception as e:
             print("Error parsing JSON response:", e)
             print("Response text:", response.text)
@@ -206,7 +256,7 @@ def _generate_bbl_estimates(acs_year, demo_dict, pop_est_df, census_api_key, tot
     var_code_list = list(demo_dict.keys()) + denom_list
     
     # making api call
-    demo_df = _pull_raw_census_data(acs_year, census_year, var_code_list, census_api_key) 
+    demo_df = _pull_raw_census_data(acs_year, census_year, var_code_list, 'tract', census_api_key)
     
     # creating bbl-level estimates in pop_est_df
     
@@ -355,7 +405,7 @@ def _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code 
     MOE_code_list = [var_code[:-1] + 'M' for var_code in var_code_list] # converting to codes that access a variable's MOE (ending in M calls variable's MOE)
 
         # retrieving the MOE and estimate data by census tract (need this data for calculating MOE of proportion in gen_proportion_MOE)
-    variance_df = _pull_raw_census_data(acs_year, census_year, var_code_list + MOE_code_list, census_api_key)      
+    variance_df = _pull_raw_census_data(acs_year, census_year, var_code_list + MOE_code_list, 'tract', census_api_key)   
     
     for MOE_code in MOE_code_list: # for each code in the list, convert to proportion
         
@@ -371,6 +421,43 @@ def _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code 
     variance_df = variance_df.drop(columns=var_code_list + MOE_code_list) # removing unnecesary columns
         
     return variance_df
+
+#
+
+def _calc_CV(geo_df, var_code):
+    
+    """
+    Calculates the Coefficient of Variation (CV) for a specified variable in the given DataFrame.
+
+    Parameters:
+    -----------
+        geo_df : pd.DataFrame 
+            A DataFrame containing the data for geographic regions. Must include columns for estimates and margins of error.
+        var_code : str 
+            The variable code representing the estimate column (e.g., '<var_code_base>E'). 
+            The function expects the Margin of Error column to follow the naming 
+            convention '<var_code_base>M', where <var_code_base> is `var_code[:-1]`.
+
+    Returns:
+    --------
+    pd.DataFrame: 
+        The input DataFrame with an additional column '<var_code_base>V', which contains the calculated CV values.
+
+    Notes:
+    ------
+        -  CV is calculated as: CV = (Standard Error / Mean) * 100 where the Standard Error is derived from the Margin of Error (MOE) using the formula: Standard Error = MOE / 1.645
+        - Infinity values in the CV column (caused by division by zero) are replaced with NaN.
+        
+    """
+    
+    var_code_base = var_code[:-1]
+    column_name_MOE = var_code_base + 'M'
+    
+    # generating coefficient of variation column in geo_df (standard deviation / mean multiplied by 100)
+    geo_df[var_code_base + 'V'] = round(100*((geo_df[column_name_MOE] / 1.645) / geo_df[var_code_base + 'E']), 2)
+    geo_df[var_code_base + 'V'] = geo_df[var_code_base + 'V'].replace(np.inf, np.nan) # converting infinity to NaN (inf comes from estimate aka the denominator being 0)
+    
+    return geo_df
 
 #
 
@@ -462,10 +549,9 @@ def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo
         mask = geo_df[var_code_base + 'E'] == 0
         # apply the mask to the desired columns and set those values to NaN
         geo_df.loc[mask, [column_name_MOE]] = np.nan
-
+        
         # generating coefficient of variation column in geo_df (standard deviation / mean multiplied by 100)
-        geo_df[var_code_base + 'V'] = round(100*((geo_df[column_name_MOE] / 1.645) / geo_df[var_code_base + 'E']), 2)
-        geo_df[var_code_base + 'V'] = geo_df[var_code_base + 'V'].replace(np.inf, np.nan) # converting infinity to NaN (inf comes from estimate aka the denominator being 0)
+        geo_df = _calc_CV(geo_df, var_code)
 
     return geo_df
 
@@ -547,14 +633,14 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     # adding Margin of Error and Coefficient of Variation to geo_df 
     geo_df = _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code, total_house_code)  
         
-    # add total population and household data if applicable
-    if total_pop_code:
-        total_population = pop_est_df.groupby(geo)["bbl_population_estimate"].sum().round()
-        geo_df = geo_df.assign(total_population=total_population)
+#     # add total population and household data if applicable
+#     if total_pop_code:
+#         total_population = pop_est_df.groupby(geo)["bbl_population_estimate"].sum().round()
+#         geo_df = geo_df.assign(total_population=total_population)
 
-    if total_house_code:
-        total_households = pop_est_df.groupby(geo)["unitsres"].sum().round()
-        geo_df = geo_df.assign(total_residences=total_households)
+#     if total_house_code:
+#         total_households = pop_est_df.groupby(geo)["unitsres"].sum().round()
+#         geo_df = geo_df.assign(total_residences=total_households)
         
     # return the final DataFrame
     return geo_df    
@@ -685,6 +771,67 @@ def get_available_councilcount_codes(acs_year=None):
     
 ######## PULL/ GENERATE ESTIMATES  
 
+def get_bbl_population_estimates(year=None):
+    
+    """
+    Produces a dataframe containing BBL-level population estimates for a specified year.
+
+    Parameters:
+    -----------
+    year : str
+        The desired year for BBL-level estimates. If None, the most recent year available will be used.
+
+    Returns:
+    --------
+    pandas.DataFrame: 
+        A table with population estimates by BBL ('bbl_population_estimate' column). 
+        
+    Notes:
+    ------
+        - The DF includes multiple geography columns. This will allow for the aggregation of population numbers to various
+        geographic levels. 
+        - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
+        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
+        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
+        density for units in each tract (division of the total population by the total number of residential units in each census
+        tract).
+        
+    """
+    if year: year = str(year) # so don't get error if accidentally input wrong dtype
+
+    # get the data directory where the data is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # construct the path to the data folder
+    data_path = os.path.join(script_dir, "data")
+
+    # find all available years
+    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
+    bbl_csv_names = [name for name in csv_names if "bbl-population-estimates_" in name]
+    bbl_years = [name[25:29] for name in bbl_csv_names]
+    
+    # if year is not chosen, set default to latest year
+    if year is None:
+        year = max(bbl_years)
+    
+    # construct the name of the dataset based on the year
+    bbl_name = f"bbl-population-estimates_{year}.csv"
+    
+    # error message if unavailable survey year selected
+    if year not in bbl_years:
+        available_years = "\n".join(bbl_years)
+        raise ValueError(
+            f"This year is not available.\n"
+            f"Please choose from the following:\n{available_years}"
+        )
+    
+    # retrieve the dataset
+    file_path = f'{data_path}/{bbl_name}'
+    df = pd.read_csv(file_path)
+    
+    return df
+
+#
+
 def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_code=None, total_house_code=None, boundary_year=None):
         
     """
@@ -700,7 +847,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
             estimate codes. Example: {'DP05_0001E': 'person', 'DP02_0059E': 'household'}. See Notes.
         geo : str
             The geographic level for estimates. Options currently include 'councildist', 'communitydist', 'schooldist',
-            'policeprct'.
+            'policeprct', 'nta', 'borough', 'city'.
         census_api_key : str
             User's Census API key.
         total_pop_code : str, optional
@@ -726,6 +873,12 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         generated by the NYC Council Data Team's methodology. Contact datainfo@council.nyc.gov with questions.
         - If the data you are looking for already exists in the CouncilCount database, please use `get_councilcount_estimates()`
         instead.
+        - Geographies fitting into the census hierachy will receive estimates directly from the ACS. In all other cases, estimates generated 
+        using the NYCC Data Team's methodology will be provided. 
+        - As an exception, pre-2021 ACS NTA requests will be fulfilled using the NYCC Data Team's methodology. 
+        This is because all NTA estimates from `councilcount` will be provided along 2020 NTA boundaries 
+        (which are directly comprised of 2020 census tracts), and pre-2021 ACS data is provided along 2010 census tract 
+        boundaries, making direct aggregation challenging.
         
     """    
     
@@ -738,10 +891,10 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     file_names = os.listdir(data_path)
     
     # record available geos
-    geo_file_names = [f for f in file_names if "boundaries" in f]
+    geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
     geo_names = list(set([f.split('-')[0] for f in geo_file_names]))
-#     geo_names.remove('nyc')
-#     geo_names.append('city')
+    geo_names.remove('nyc')
+    geo_names.append('city')
 
     # record available years
     available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
@@ -764,18 +917,38 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         if boundary_year not in [2013, 2023]:
             raise ValueError("Input for boundary_year not recognized. Options include 2013 and 2023")
 
-    # generating blank BBL-level population estimates df
-    blank_pop_est_df = get_bbl_population_estimates(acs_year)
-    
-    # adding columns for BBL-level demographic estimates
-    pop_est_df = _generate_bbl_estimates(acs_year, demo_dict, blank_pop_est_df, census_api_key, total_pop_code, total_house_code)
+    # selections for which estimates must be created using thr Data Team's methodology    
+    if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo == 'nta') and (acs_year < 2021)):        
+        
+        # generating blank BBL-level population estimates df
+        blank_pop_est_df = get_bbl_population_estimates(acs_year)
 
-    # creating census tract-level variances in order to calculate MOE at the geo-level below
-    variance_df = _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code, total_house_code)
-    
-    # creating geo-level estimates, MOEs, and CVs
-    raw_geo_df = _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, total_pop_code, total_house_code, boundary_year)
-    
+        # adding columns for BBL-level demographic estimates
+        pop_est_df = _generate_bbl_estimates(acs_year, demo_dict, blank_pop_est_df, census_api_key, total_pop_code, total_house_code)
+
+        # creating census tract-level variances in order to calculate MOE at the geo-level below
+        variance_df = _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code, total_house_code)
+
+        # creating geo-level estimates, MOEs, and CVs
+        raw_geo_df = _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, total_pop_code, total_house_code, boundary_year)
+      
+    # selections for which estimates can be directly taken from the ACS
+    elif (geo in ['borough','city']) or ((geo == 'nta') and (acs_year >= 2021)):
+        
+        # setting census year (the year census tracts are associated with) 
+        if (acs_year < 2020) and (acs_year >= 2010): # censuses from these years use 2010 census tracts 
+            census_year = 2010
+        elif acs_year >= 2020: # censuses from these years use 2020 census tracts 
+            census_year = 2020
+            
+        var_code_list = list(demo_dict.keys()) # list of all variable codes entered in the demo_dict
+        MOE_code_list = [var_code[:-1] + 'M' for var_code in var_code_list] # converting to codes that access a variable's MOE 
+        
+        # pull estimates and MOEs from Census API
+        raw_geo_df = _pull_raw_census_data(acs_year, census_year, var_code_list + MOE_code_list, geo, census_api_key)
+        # add CV
+        for var_code in var_code_list: raw_geo_df = _calc_CV(raw_geo_df, var_code)
+        
     # cleaning
     cleaned_geo_df = _reorder_columns(raw_geo_df)
     
@@ -917,66 +1090,3 @@ def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundar
         return read_geos(geo)
     else:
         return read_geos(geo, boundary_year_num)
-
-#
-
-def get_bbl_population_estimates(year=None):
-    
-    """
-    Produces a dataframe containing BBL-level population estimates for a specified year.
-
-    Parameters:
-    -----------
-    year : str
-        The desired year for BBL-level estimates. If None, the most recent year available will be used.
-
-    Returns:
-    --------
-    pandas.DataFrame: 
-        A table with population estimates by BBL ('bbl_population_estimate' column). 
-        
-    Notes:
-    ------
-        - The DF includes multiple geography columns. This will allow for the aggregation of population numbers to various
-        geographic levels. 
-        - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
-        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
-        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
-        density for units in each tract (division of the total population by the total number of residential units in each census
-        tract).
-        
-    """
-    if year: year = str(year) # so don't get error if accidentally input wrong dtype
-
-    # get the data directory where the data is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # construct the path to the data folder
-    data_path = os.path.join(script_dir, "data")
-
-    # find all available years
-    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
-    bbl_csv_names = [name for name in csv_names if "bbl-population-estimates_" in name]
-    bbl_years = [name[25:29] for name in bbl_csv_names]
-    
-    # if year is not chosen, set default to latest year
-    if year is None:
-        year = max(bbl_years)
-    
-    # construct the name of the dataset based on the year
-    bbl_name = f"bbl-population-estimates_{year}.csv"
-    
-    # error message if unavailable survey year selected
-    if year not in bbl_years:
-        available_years = "\n".join(bbl_years)
-        raise ValueError(
-            f"This year is not available.\n"
-            f"Please choose from the following:\n{available_years}"
-        )
-    
-    print(f"Printing BBL-level population estimates for {year}")
-    
-    # retrieve the dataset
-    file_path = f'{data_path}/{bbl_name}'
-    df = pd.read_csv(file_path)
-    
-    return df

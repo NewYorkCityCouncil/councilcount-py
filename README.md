@@ -1,4 +1,6 @@
-![CouncilCount Logo](https://github.com/NewYorkCityCouncil/councilcount-py/blob/main/data-council-logo.png)
+<picture align="center">
+  <img alt="NYCC Data Team Logo" src="https://raw.githubusercontent.com/NewYorkCityCouncil/councilcount-py/53afaa0e28072eb80d32d65c8d8638fa00f18436/data-council-logo.png">
+</picture>
 
 # Overview
 

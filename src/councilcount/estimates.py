@@ -771,6 +771,67 @@ def get_available_councilcount_codes(acs_year=None):
     
 ######## PULL/ GENERATE ESTIMATES  
 
+def get_bbl_population_estimates(year=None):
+    
+    """
+    Produces a dataframe containing BBL-level population estimates for a specified year.
+
+    Parameters:
+    -----------
+    year : str
+        The desired year for BBL-level estimates. If None, the most recent year available will be used.
+
+    Returns:
+    --------
+    pandas.DataFrame: 
+        A table with population estimates by BBL ('bbl_population_estimate' column). 
+        
+    Notes:
+    ------
+        - The DF includes multiple geography columns. This will allow for the aggregation of population numbers to various
+        geographic levels. 
+        - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
+        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
+        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
+        density for units in each tract (division of the total population by the total number of residential units in each census
+        tract).
+        
+    """
+    if year: year = str(year) # so don't get error if accidentally input wrong dtype
+
+    # get the data directory where the data is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # construct the path to the data folder
+    data_path = os.path.join(script_dir, "data")
+
+    # find all available years
+    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
+    bbl_csv_names = [name for name in csv_names if "bbl-population-estimates_" in name]
+    bbl_years = [name[25:29] for name in bbl_csv_names]
+    
+    # if year is not chosen, set default to latest year
+    if year is None:
+        year = max(bbl_years)
+    
+    # construct the name of the dataset based on the year
+    bbl_name = f"bbl-population-estimates_{year}.csv"
+    
+    # error message if unavailable survey year selected
+    if year not in bbl_years:
+        available_years = "\n".join(bbl_years)
+        raise ValueError(
+            f"This year is not available.\n"
+            f"Please choose from the following:\n{available_years}"
+        )
+    
+    # retrieve the dataset
+    file_path = f'{data_path}/{bbl_name}'
+    df = pd.read_csv(file_path)
+    
+    return df
+
+#
+
 def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_code=None, total_house_code=None, boundary_year=None):
         
     """
@@ -872,7 +933,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         raw_geo_df = _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, total_pop_code, total_house_code, boundary_year)
       
     # selections for which estimates can be directly taken from the ACS
-    else:
+    elif (geo in ['borough','city']) or ((geo == 'nta') and (acs_year >= 2021)):
         
         # setting census year (the year census tracts are associated with) 
         if (acs_year < 2020) and (acs_year >= 2010): # censuses from these years use 2010 census tracts 
@@ -1029,64 +1090,3 @@ def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundar
         return read_geos(geo)
     else:
         return read_geos(geo, boundary_year_num)
-
-#
-
-def get_bbl_population_estimates(year=None):
-    
-    """
-    Produces a dataframe containing BBL-level population estimates for a specified year.
-
-    Parameters:
-    -----------
-    year : str
-        The desired year for BBL-level estimates. If None, the most recent year available will be used.
-
-    Returns:
-    --------
-    pandas.DataFrame: 
-        A table with population estimates by BBL ('bbl_population_estimate' column). 
-        
-    Notes:
-    ------
-        - The DF includes multiple geography columns. This will allow for the aggregation of population numbers to various
-        geographic levels. 
-        - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
-        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
-        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
-        density for units in each tract (division of the total population by the total number of residential units in each census
-        tract).
-        
-    """
-    if year: year = str(year) # so don't get error if accidentally input wrong dtype
-
-    # get the data directory where the data is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # construct the path to the data folder
-    data_path = os.path.join(script_dir, "data")
-
-    # find all available years
-    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
-    bbl_csv_names = [name for name in csv_names if "bbl-population-estimates_" in name]
-    bbl_years = [name[25:29] for name in bbl_csv_names]
-    
-    # if year is not chosen, set default to latest year
-    if year is None:
-        year = max(bbl_years)
-    
-    # construct the name of the dataset based on the year
-    bbl_name = f"bbl-population-estimates_{year}.csv"
-    
-    # error message if unavailable survey year selected
-    if year not in bbl_years:
-        available_years = "\n".join(bbl_years)
-        raise ValueError(
-            f"This year is not available.\n"
-            f"Please choose from the following:\n{available_years}"
-        )
-    
-    # retrieve the dataset
-    file_path = f'{data_path}/{bbl_name}'
-    df = pd.read_csv(file_path)
-    
-    return df
