@@ -1,5 +1,5 @@
 from .estimates import get_census_api_codes, get_available_councilcount_codes, generate_new_estimates, get_councilcount_estimates, get_bbl_population_estimates 
-from .calculate import calc_percent_MOE
+from .calculate import calc_percent_estimate
 
 __all__ = [
     "get_census_api_codes",
@@ -7,5 +7,5 @@ __all__ = [
     "generate_new_estimates",
     "get_councilcount_estimates",
     "get_bbl_population_estimates",
-    "calc_percent_MOE"
+    "calc_percent_estimate"
 ]

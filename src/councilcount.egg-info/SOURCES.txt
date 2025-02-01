@@ -16,6 +16,7 @@ src/councilcount/data/bbl-population-estimates_2011.csv
 src/councilcount/data/bbl-population-estimates_2016.csv
 src/councilcount/data/bbl-population-estimates_2021.csv
 src/councilcount/data/bbl-population-estimates_2022.csv
+src/councilcount/data/borough-boundaries.geojson
 src/councilcount/data/borough-geographies_2011.geojson
 src/councilcount/data/borough-geographies_2016.geojson
 src/councilcount/data/borough-geographies_2021.geojson

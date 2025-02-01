@@ -60,6 +60,12 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
             # to help build NTAs out of census tracts
             nta_conversion = pd.read_csv('../src/councilcount/data/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
             conversion_dict = pd.Series(nta_conversion['NTACode'].values,index=nta_conversion['GEOID'].astype(str)).to_dict() 
+            # need to pull in df with both names and codes to create column with NTA full names 
+            data_path = files("councilcount").joinpath("data") # setting path
+            file_path = f'{data_path}/nta-boundaries.geojson'
+            with open(file_path) as f: df = geojson.load(f)
+            features = df["features"]
+            nta_name_df = pd.json_normalize([feature["properties"] for feature in features])
         
     url = f'{base_url}/{acs_year}/{dataset}?get={variables}&for={for_code}&in=state:{state}&key={census_api_key}'
     response = requests.get(url)
@@ -69,8 +75,9 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
         try:
             data = response.json()  # attempt to parse JSON response
             demo_df = pd.DataFrame(data[1:], columns=data[0]) # first row is the header
-            demo_df[var_code_list] = demo_df[var_code_list].astype(int) # setting dtype
-            
+            demo_df.replace('-555555555', np.nan, inplace=True) # sometimes this number comes in when data is missing
+            demo_df[var_code_list] = demo_df[var_code_list].astype(float) # setting dtype
+                
             if level == 'tract':
                 # create unique identifier for each tract (some counties have duplicate census tract names)
                 demo_df[f'{census_year}_tract_id'] = demo_df['tract'].astype(int).astype(str) + '-' + demo_df['county'].astype(int).astype(str)
@@ -85,15 +92,9 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
                 demo_df[MOE_columns] = demo_df[MOE_columns]**2 # squaring MOE columns
                 # aggregating estimates and MOE from tract-level to nta-level
                 demo_df = demo_df.groupby(level).sum().reset_index()
-                demo_df[MOE_columns] = np.sqrt(demo_df[MOE_columns]).round().astype(int) # sqrt the sum of all MOEs squared                     
-                # creating column with NTA full names (need to pull in df with both names and codes)
-                data_path = files("councilcount").joinpath("data") # setting path
-                file_path = f'{data_path}/nta-boundaries.geojson'
-                with open(file_path) as f: df = geojson.load(f)
-                features = df["features"]
-                df = pd.json_normalize([feature["properties"] for feature in features])
-                # second conversion
-                nta_names = dict(zip(neighborhood_geographies['nta2020'],neighborhood_geographies['ntaname']))
+                demo_df[MOE_columns] = np.sqrt(demo_df[MOE_columns]).round().astype(int) # sqrt the sum of all MOEs squared      
+                # second conversion (adding full names using codes)
+                nta_names = dict(zip(nta_name_df['nta2020'],nta_name_df['ntaname']))
                 demo_df['ntaname'] = demo_df[level].map(nta_names)                      
                 demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning  
                 demo_df.insert(1, 'ntaname', demo_df.pop('ntaname'))
@@ -183,13 +184,18 @@ def _calc_proportion_estimate(demo_dict, demo_df, var_code, total_pop_code = Non
         - Any infinite values resulting from division by zero are replaced with NaN.
 
     """
-   
-    denom = demo_dict.get(var_code) # accessing denom
+    
+    if var_code == total_house_code:
+        denom = 'household'
+    elif var_code == total_pop_code: 
+        denom = 'person'
+    else:
+        denom = demo_dict.get(var_code) # accessing denom
     
     if denom == 'household': # will divide by total households 
-        demo_df[var_code] = demo_df[var_code] / demo_df[total_house_code] # creating percent by tract
+        demo_df[var_code] = (demo_df[var_code] / demo_df[total_house_code]).round(3) # creating percent by tract
     elif denom == 'person': # will divide by total population
-        demo_df[var_code] = demo_df[var_code] / demo_df[total_pop_code]  
+        demo_df[var_code] = (demo_df[var_code] / demo_df[total_pop_code]).round(3)  
 
     demo_df.replace([np.inf, -np.inf], np.nan, inplace=True) # for any inf values created because of division by 0
    
@@ -260,17 +266,25 @@ def _generate_bbl_estimates(acs_year, demo_dict, pop_est_df, census_api_key, tot
     
     # creating bbl-level estimates in pop_est_df
     
-    for var_code in list(demo_dict.keys()): # for each code in the list
+    for var_code in list(demo_dict.keys()) + denom_list: # for each code in the list
 
-        if var_code not in denom_list: # exclude total population and total households because they are the denominators for the other variables
+#         if var_code not in denom_list: # exclude total population and total households because they are the denominators for the other variables
 
-            # turning raw number to percent (total population/ households is denominator)
-            demo_df = _calc_proportion_estimate(demo_dict, demo_df, var_code, total_pop_code, total_house_code) 
-
-        if demo_dict[var_code] == 'household': # for variables with total households as the denominator
+        # turning raw number to percent (total population/ households is denominator)
+        demo_df = _calc_proportion_estimate(demo_dict, demo_df, var_code, total_pop_code, total_house_code) 
+        
+        # accessing denom
+        if var_code == total_house_code:
+            denom = 'household'
+        elif var_code == total_pop_code: 
+            denom = 'person'
+        else:
+            denom = demo_dict.get(var_code) 
+        
+        if denom == 'household': # for variables with total households as the denominator
             est_level = 'hh_est_' # household estimate
             total_pop = 'unitsres' # denominator is total units
-        elif demo_dict[var_code] == 'person': # for variables with total population as the denominator
+        elif denom == 'person': # for variables with total population as the denominator
             est_level = 'pop_est_' # total population estimate
             total_pop = 'bbl_population_estimate' # denominator is total population
 
@@ -348,9 +362,9 @@ def _calc_proportion_MOE(demo_dict, variance_df, MOE_code, total_pop_code = None
 
         under_sqrt = numerator_MOE_val**2 - (numerator_est_val / denom_est_val)**2 * denom_MOE_val**2
         if under_sqrt >= 0:
-            return np.sqrt(under_sqrt) / denom_est_val
+            return (np.sqrt(under_sqrt) / denom_est_val).round(3)
         else:
-            return np.sqrt(numerator_MOE_val**2 + (numerator_est_val / denom_est_val)**2 * denom_MOE_val**2) / denom_est_val
+            return (np.sqrt(numerator_MOE_val**2 + (numerator_est_val / denom_est_val)**2 * denom_MOE_val**2) / denom_est_val).round(3)
 
     variance_df[MOE_code] = variance_df.apply(calculate_moe, axis=1) # apply function
     
@@ -404,15 +418,21 @@ def _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code 
     var_code_list = list(demo_dict.keys()) + denom_list # list of all variable codes entered in the demo_dict
     MOE_code_list = [var_code[:-1] + 'M' for var_code in var_code_list] # converting to codes that access a variable's MOE (ending in M calls variable's MOE)
 
-        # retrieving the MOE and estimate data by census tract (need this data for calculating MOE of proportion in gen_proportion_MOE)
+    # retrieving the MOE and estimate data by census tract (need this data for calculating MOE of proportion in gen_proportion_MOE)
     variance_df = _pull_raw_census_data(acs_year, census_year, var_code_list + MOE_code_list, 'tract', census_api_key)   
     
     for MOE_code in MOE_code_list: # for each code in the list, convert to proportion
         
         if MOE_code not in denom_moe_list: # exclude total population and total households because they are the denominators for the other variables
        
-            # turning raw number MOE to MOE of proportion (total population or total households = denominator)
+            # turning raw number MOE to MOE of proportion (applies formula for numerator MOE / denominator MOE -> denom either population or households)
             variance_df = _calc_proportion_MOE(demo_dict, variance_df, MOE_code, total_pop_code, total_house_code) 
+            
+        else: # for denominators, simply divide number MOE by number estimate to get proportion
+
+            # turning raw number MOE to MOE of proportion (total population MOE / total population)
+            variance_df[MOE_code] = (variance_df[MOE_code] / variance_df[MOE_code[:-1] + 'E']).round(3)
+            variance_df[MOE_code] = variance_df[MOE_code].replace([np.inf, -np.inf], np.nan)
 
         var_code = MOE_code[:-1] + 'E' # creating column name based on estimate code
         
@@ -451,17 +471,18 @@ def _calc_CV(geo_df, var_code):
     """
     
     var_code_base = var_code[:-1]
+    column_name_est = var_code_base + 'E'
     column_name_MOE = var_code_base + 'M'
-    
+
     # generating coefficient of variation column in geo_df (standard deviation / mean multiplied by 100)
-    geo_df[var_code_base + 'V'] = round(100*((geo_df[column_name_MOE] / 1.645) / geo_df[var_code_base + 'E']), 2)
+    geo_df[var_code_base + 'V'] = round(100*((geo_df[column_name_MOE] / 1.645) / geo_df[column_name_est]), 2)
     geo_df[var_code_base + 'V'] = geo_df[var_code_base + 'V'].replace(np.inf, np.nan) # converting infinity to NaN (inf comes from estimate aka the denominator being 0)
     
     return geo_df
 
 #
 
-def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code = None, total_house_code = None): 
+def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code = None, total_house_code = None, boundary_year = None): 
     
     """
     This function is called by `_estimates_by_geography()` to calculate MOE and CV values for given demographic variables at a
@@ -486,6 +507,9 @@ def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo
         The variable code for total population. Required if any variables are person-level.
     total_house_code : str, optional
         The variable code for total households. Required if any variables are household-level.
+    boundary_year : int
+        Year for the geographic boundary (relevant for "councildist"). Options: 2013, 2023.
+
 
     Returns:
     --------
@@ -494,30 +518,37 @@ def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo
 
     """
     
+    # for councildist requests
+    if (boundary_year) and (geo == 'councildist'): boundary_ext = f'_{boundary_year}'
+    else: boundary_ext = ''
+    
     # picking which denoms to include
     denom_list = [code for code in (total_pop_code, total_house_code) if code is not None]
     
-    for var_code in demo_dict.keys(): # for all of the variables in the demo_dict
-        
-        if var_code not in denom_list: # excluding denominators
+    for var_code in list(demo_dict.keys()) + denom_list: # for all of the variables in the demo_dict
+#         if var_code not in denom_list: # excluding denominators
 
-            denom_type = demo_dict[var_code] # to access type
+        # accessing denom
+        if var_code == total_house_code:
+            denom_type = 'household'
+        elif var_code == total_pop_code: 
+            denom_type = 'person'
+        else:
+            denom_type = demo_dict.get(var_code) 
 
-            if denom_type == 'household': # will pull values for household-level estimates
-
-                est_level = 'hh_est_' 
-                total_pop = 'unitsres' # denominator is total residential units
-
-            elif denom_type == 'person': # will pull correct values for person-level estimates
-
-                est_level = 'pop_est_' 
-                total_pop = 'bbl_population_estimate' # denominator is total population
+        # collecting column names for calculation
+        if denom_type == 'household': # will pull values for household-level estimates
+            est_level = 'hh_est_' 
+            total_pop = 'unitsres' # denominator is total residential units
+        elif denom_type == 'person': # will pull correct values for person-level estimates
+            est_level = 'pop_est_' 
+            total_pop = 'bbl_population_estimate' # denominator is total population
 
         # following Chris' protocal for converting census tract variances to geo-level variances
 
         # df that displays the overlap between each geographic region and each census tract 
         # for each overlap, the estimated denominator population and the estimated population of the given demographic
-        census_geo_overlap = pop_est_df.groupby([geo, str(census_year) + '_tract_id']).sum()[[total_pop, est_level + var_code]]
+        census_geo_overlap = pop_est_df.groupby([f'{geo}{boundary_ext}', str(census_year) + '_tract_id']).sum()[[total_pop, est_level + var_code]]
 
         # adding the variance by census tract (in proportion form, with total population/ households being the denominator) to each overlapping geo-tract region
         census_geo_overlap = census_geo_overlap.reset_index()
@@ -527,19 +558,19 @@ def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo
         census_geo_overlap['n_squared_x_variance'] = census_geo_overlap[total_pop]**2 * census_geo_overlap[var_code + '_variance']
 
         # aggregating all values by selected geo
-        by_geo = census_geo_overlap.groupby(geo).sum()
+        by_geo = census_geo_overlap.groupby(f'{geo}{boundary_ext}').sum()
 
         # estimated proportion of the population in each council district that belongs to a given demographic
-#             by_geo['prop_' + var_code] = by_geo[est_level + var_code] / by_geo[total_pop]
+    #             by_geo['prop_' + var_code] = by_geo[est_level + var_code] / by_geo[total_pop]
 
         # df of variances by geo region for given demographic variable and chosen geography   
-        by_geo[geo + '_variance'] = by_geo['n_squared_x_variance'] / by_geo[total_pop]**2      
+        by_geo[f'{geo}{boundary_ext}_variance'] = by_geo['n_squared_x_variance'] / by_geo[total_pop]**2      
 
         var_code_base = var_code[:9] # preparing for naming -> taking first 9 digits, then adding appropriate final letter(s) below
         column_name_MOE = var_code_base + 'M'
         column_name_percent_MOE = var_code_base + 'PM'
 
-        by_geo[column_name_percent_MOE] = round(100*((np.sqrt(by_geo[geo + '_variance'])) * 1.645),2) # creating MOE as % (square root of variance multiplied by 1.645, then 100)
+        by_geo[column_name_percent_MOE] = round(100*((np.sqrt(by_geo[f'{geo}{boundary_ext}_variance'])) * 1.645),2) # creating MOE as % (square root of variance multiplied by 1.645, then 100)
         by_geo[column_name_MOE] = round((by_geo[column_name_percent_MOE]/100) * by_geo[total_pop]) # MOE as number
 
         # adding MOE by geo region to geo_df
@@ -549,7 +580,7 @@ def _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo
         mask = geo_df[var_code_base + 'E'] == 0
         # apply the mask to the desired columns and set those values to NaN
         geo_df.loc[mask, [column_name_MOE]] = np.nan
-        
+
         # generating coefficient of variation column in geo_df (standard deviation / mean multiplied by 100)
         geo_df = _calc_CV(geo_df, var_code)
 
@@ -610,37 +641,37 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     # create dataframe
     features = geo_data["features"]
     geo_df = pd.json_normalize([feature["properties"] for feature in features])
-    geo_df = geo_df.set_index(geo)
+    geo_df = geo_df.set_index(f'{geo}{boundary_ext}')
 
     # prepare denominators
     denom_list = [code for code in (total_pop_code, total_house_code) if code]
 
-    # process each variable in demo_dict
-    for var_code, denom_type in demo_dict.items():
-        if var_code not in denom_list: # excluding denominators 
-            if denom_type == "household":
-                est_level = "hh_est_"
-                total_col = "unitsres" # denominator is residential units
-            elif denom_type == "person": 
-                est_level = "pop_est_"
-                total_col = "bbl_population_estimate" # denominator is total population
-
-            # aggregating the estimated population by desired geography and adding it to the geo_df
-            var_code_base = var_code[:9]  # preparing for naming -> taking first 9 digits, then adding appropriate final letter(s) below
-            aggregated_data = pop_est_df.groupby(geo)[est_level + var_code].sum().round()
-            geo_df = geo_df.assign(**{var_code_base + "E": aggregated_data})
+    # process each variable in demo_dict (along with denominators)
+    for var_code in list(demo_dict.keys()) + denom_list:
         
+        # accessing denom
+        if var_code == total_house_code:
+            denom_type = 'household'
+        elif var_code == total_pop_code: 
+            denom_type = 'person'
+        else:
+            denom_type = demo_dict.get(var_code) 
+        
+        # gathering column names for calculations
+        if denom_type == "household":
+            est_level = "hh_est_"
+            #total_col = "unitsres" # denominator is residential units
+        elif denom_type == "person": 
+            est_level = "pop_est_"
+            #total_col = "bbl_population_estimate" # denominator is total population
+
+        # aggregating the estimated population by desired geography and adding it to the geo_df
+        var_code_base = var_code[:9]  # preparing for naming -> taking first 9 digits, then adding appropriate final letter(s) below
+        aggregated_data = pop_est_df.groupby(f'{geo}{boundary_ext}')[est_level + var_code].sum().round()
+        geo_df = geo_df.assign(**{var_code_base + "E": aggregated_data})
+
     # adding Margin of Error and Coefficient of Variation to geo_df 
-    geo_df = _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code, total_house_code)  
-        
-#     # add total population and household data if applicable
-#     if total_pop_code:
-#         total_population = pop_est_df.groupby(geo)["bbl_population_estimate"].sum().round()
-#         geo_df = geo_df.assign(total_population=total_population)
-
-#     if total_house_code:
-#         total_households = pop_est_df.groupby(geo)["unitsres"].sum().round()
-#         geo_df = geo_df.assign(total_residences=total_households)
+    geo_df = _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code, total_house_code, boundary_year)  
         
     # return the final DataFrame
     return geo_df    
@@ -677,8 +708,12 @@ def get_census_api_codes(acs_year, census_api_key):
     """
 
     # preparing url 
+
+    # define parameters
+    base_url = "https://api.census.gov/data"
+    dataset = "acs/acs5/profile"  # ACS 5-year dataset
     
-    base_url = f'https://api.census.gov/data/{acs_year}/acs/acs5/profile/variables?key={census_api_key}'
+    base_url = f'{base_url}/{acs_year}/{dataset}/variables?key={census_api_key}'
 
     response = requests.get(base_url)
     response.raise_for_status()
@@ -768,7 +803,7 @@ def get_available_councilcount_codes(acs_year=None):
     df = pd.read_csv(file_path)
 
     return df
-    
+
 ######## PULL/ GENERATE ESTIMATES  
 
 def get_bbl_population_estimates(year=None):
@@ -835,7 +870,8 @@ def get_bbl_population_estimates(year=None):
 def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_code=None, total_house_code=None, boundary_year=None):
         
     """
-    Generates demographic estimates, margins of error (MOEs), and coefficients of variation (CVs) for a specified NYC geography.
+    Generates demographic estimates, margins of error (MOEs), and coefficients of variation (CVs) for a specified NYC geography. 
+    If total_pop_code and/ or total_house_code entered, output columns for these variables will also be included.
 
     Parameters:
     ----------
@@ -911,11 +947,16 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     if 'household' in demo_dict.values() and total_house_code is None:
         raise ValueError("Must include total_house_code for household-level estimates.")
     # include boundary_year when needed    
-    if (geo == 'councildist'):
+    if geo == 'councildist':
         if not boundary_year:
-            raise ValueError("Must provide an input for boundary_year when geo = councildist. Options include 2013 and 2023.")
+            boundary_year = 2023
+            warn("`boundary_year` must be set to 2013 or 2023 when `geo` is 'councildist'. Defaulting to 2023.")
         if boundary_year not in [2013, 2023]:
-            raise ValueError("Input for boundary_year not recognized. Options include 2013 and 2023")
+            raise ValueError("Input for boundary_year not recognized. Options include 2013 and 2023")        
+    # remove boundary_year when not needed
+    if (boundary_year != None) & (geo != 'councildist'): 
+        boundary_year = None
+        warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
 
     # selections for which estimates must be created using thr Data Team's methodology    
     if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo == 'nta') and (acs_year < 2021)):        
@@ -941,7 +982,10 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         elif acs_year >= 2020: # censuses from these years use 2020 census tracts 
             census_year = 2020
             
-        var_code_list = list(demo_dict.keys()) # list of all variable codes entered in the demo_dict
+        # prepare denominators
+        denom_list = [code for code in (total_pop_code, total_house_code) if code]
+            
+        var_code_list = list(demo_dict.keys()) + denom_list # list of all variable codes entered in the demo_dict + denoms
         MOE_code_list = [var_code[:-1] + 'M' for var_code in var_code_list] # converting to codes that access a variable's MOE 
         
         # pull estimates and MOEs from Census API
@@ -956,7 +1000,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
 
 #
 
-def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundary_year=None):
+def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=None):
     
     """
     Retrieve demographic estimates by specified geography, ACS year, and boundary year (if applicable). Pulls from the existing 
@@ -1007,19 +1051,18 @@ def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundar
     # record available years
     available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
 
-    # boundary year information
-    boundary_year_num = str(boundary_year)[-2:] if boundary_year else None
-
-    def read_geos(geo, boundary_year_ext=None):
+    def read_geos(geo, boundary_year=None):
         """
         Internal function to read and wrangle geo files.
         """
-        
-        # preparing to access files with boundary year in name
-        add_boundary_year = f"_b{boundary_year_ext}" if boundary_year_ext else ""
+        # boundary year information 
+        boundary_year_num = str(boundary_year)[-2:] if boundary_year else ''
+
+        # preparing to access files with boundary year in name (file name example: councildist-goegraphies_b23_2022.csv)
+        add_boundary_year = f'_b{boundary_year_num}' if boundary_year_num else ''
         
         # building paths
-        if geo == "city":
+        if geo == 'city':
             file_path = f'{data_path}/nyc-wide_estimates_{acs_year}.csv'
             geo_df = pd.read_csv(file_path)
         else:
@@ -1032,14 +1075,17 @@ def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundar
             geo_df = pd.json_normalize([feature['properties'] for feature in features])
 
         # if list of variable codes requested, subset
-        if var_codes == "all": 
+        if var_codes == 'all': 
             return geo_df
         
         # if list of variable codes requested, subset
         else: 
             
+            # adding boundary year for accessing column name in geo_df (column name example: 'councildist_2023')
+            boundary_ext = f'_{boundary_year}' if boundary_year else ''
+            
             # list of columns for chosen variable(s) if "all" NOT selected
-            master_col_list = [geo] 
+            master_col_list = [f'{geo}{boundary_ext}'] 
             
             # creating list of desired variables names (for sub-setting final table)
             for var_code in var_codes:  
@@ -1077,16 +1123,16 @@ def get_councilcount_estimates(acs_year=None, geo=None, var_codes="all", boundar
                          ", ".join(geo_names))
     elif geo == "councildist" and str(boundary_year) not in ["2013", "2023"]:
         warn("`boundary_year` must be set to 2013 or 2023 when `geo` is 'councildist'. Defaulting to 2023.")
-        boundary_year_num = "23"
-        return read_geos(geo, boundary_year_num)
+        boundary_year = 2023
+        return read_geos(geo, boundary_year)
     elif acs_year not in available_years:
         raise ValueError(f"The ACS year {acs_year} could not be found. Available options are:\n" +
                          ", ".join(map(str, available_years)))
     elif geo not in geo_names:
         raise ValueError(f"The geography '{geo}' could not be found. Available options are:\n" +
                          ", ".join(geo_names))
-    elif geo != "councildist" and boundary_year is not None:
+    elif (geo != "councildist") and (boundary_year is not None):
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
         return read_geos(geo)
     else:
-        return read_geos(geo, boundary_year_num)
+        return read_geos(geo, boundary_year)
