@@ -1,0 +1,7 @@
+# Note: These files don’t need to be tracked by Git because they can be recreated from the source code
+# To recreate, use terminal command: python setup.py bdist_wheel
+
+# Ignore build and distribution directories
+dist/
+build/
+src/*.egg-info/
