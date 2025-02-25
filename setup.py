@@ -1,20 +1,8 @@
 from setuptools import setup, find_packages
-import os
-
-# read the contents of README.md and CONTRIBUTORS.md
-def read_file(filename):
-    with open(filename, "r", encoding="utf-8") as f:
-        return f.read()
-
-# check if CONTRIBUTORS.md exists before including it
-contributors_file = "CONTRIBUTORS.md"
-long_description = read_file("README.md")
-if os.path.exists(contributors_file):
-    long_description += "\n\n" + read_file(contributors_file)
 
 setup(
     name="councilcount",
-    version="0.1.7",
+    version="0.3.3",
     description="The `councilcount` package allows easy access to ACS population data across various NYC geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",

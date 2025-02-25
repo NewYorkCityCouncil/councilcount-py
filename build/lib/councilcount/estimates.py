@@ -58,7 +58,8 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
         for_code = 'tract:*&in=county:005,047,061,081,085' # all NYC census tracts
         if level == 'nta':
             # to help build NTAs out of census tracts
-            nta_conversion = pd.read_csv('../src/councilcount/data/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
+            data_path = files("councilcount").joinpath("data") # setting path
+            nta_conversion = pd.read_csv(f'{data_path}/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
             conversion_dict = pd.Series(nta_conversion['NTACode'].values,index=nta_conversion['GEOID'].astype(str)).to_dict() 
             # need to pull in df with both names and codes to create column with NTA full names 
             data_path = files("councilcount").joinpath("data") # setting path
@@ -929,8 +930,11 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     # record available geos
     geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
     geo_names = list(set([f.split('-')[0] for f in geo_file_names]))
-    geo_names.remove('nyc')
-    geo_names.append('city')
+    # cleaning names to allign with input options
+    to_remove = ['councildist_2023', 'councildist_2013', 'nyc']
+    replacements = ['councildist', 'city']
+    geo_names = [g for g in geo_names if g not in to_remove]
+    geo_names = geo_names + replacements 
 
     # record available years
     available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
@@ -1045,8 +1049,11 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     file_names = os.listdir(data_path)
     geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
     geo_names = list(set([f.split('-')[0] for f in geo_file_names]))
-    geo_names.remove('nyc')
-    geo_names.append('city')
+    # cleaning names to allign with input options
+    to_remove = ['councildist_2023', 'councildist_2013', 'nyc']
+    replacements = ['councildist', 'city']
+    geo_names = [g for g in geo_names if g not in to_remove]
+    geo_names = geo_names + replacements 
 
     # record available years
     available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
@@ -1055,18 +1062,18 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
         """
         Internal function to read and wrangle geo files.
         """
-        # boundary year information 
-        boundary_year_num = str(boundary_year)[-2:] if boundary_year else ''
+        # # boundary year information 
+        # boundary_year_num = str(boundary_year)[-2:] if boundary_year else ''
 
-        # preparing to access files with boundary year in name (file name example: councildist-goegraphies_b23_2022.csv)
-        add_boundary_year = f'_b{boundary_year_num}' if boundary_year_num else ''
-        
+        # # preparing to access files with boundary year in name (file name example: councildist-goegraphies_b23_2022.csv)
+        add_boundary_year = f'_{boundary_year}' if boundary_year != None else ''
+
         # building paths
         if geo == 'city':
             file_path = f'{data_path}/nyc-wide_estimates_{acs_year}.csv'
             geo_df = pd.read_csv(file_path)
         else:
-            file_path = f'{data_path}/{geo}-geographies{add_boundary_year}_{acs_year}.geojson'
+            file_path = f'{data_path}/{geo}{add_boundary_year}-geographies_{acs_year}.geojson'
             
             with open(file_path) as f:
                 gj = geojson.load(f)
@@ -1081,11 +1088,11 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
         # if list of variable codes requested, subset
         else: 
             
-            # adding boundary year for accessing column name in geo_df (column name example: 'councildist_2023')
-            boundary_ext = f'_{boundary_year}' if boundary_year else ''
+            # # adding boundary year for accessing column name in geo_df (column name example: 'councildist_2023')
+            # boundary_ext = f'_{boundary_year}' if boundary_year else ''
             
             # list of columns for chosen variable(s) if "all" NOT selected
-            master_col_list = [f'{geo}{boundary_ext}'] 
+            master_col_list = [f'{geo}{add_boundary_year}'] 
             
             # creating list of desired variables names (for sub-setting final table)
             for var_code in var_codes:  
@@ -1121,7 +1128,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     elif geo is None:
         raise ValueError("`geo` parameter is required. Available options are:\n" +
                          ", ".join(geo_names))
-    elif geo == "councildist" and str(boundary_year) not in ["2013", "2023"]:
+    elif (geo == "councildist") and ((str(boundary_year) not in ["2013", "2023"]) | (boundary_year == None)):
         warn("`boundary_year` must be set to 2013 or 2023 when `geo` is 'councildist'. Defaulting to 2023.")
         boundary_year = 2023
         return read_geos(geo, boundary_year)
