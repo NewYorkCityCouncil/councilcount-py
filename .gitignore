@@ -4,5 +4,4 @@
 # Ignore build and distribution directories
 dist/
 build/
-build/lib/councilcount/
-src/councilcount.egg-info
+src/councilcount.egg-info/

@@ -4,7 +4,7 @@
 
 # Overview
 
-`councilcount` is the companion package for CouncilCount, a webpage designed by the New York City Council Data Team that visualizes population data for over 100 demographic groups across various NYC geographic boundaries. Where possible, this data was sourced directly from the 5-Year American Community Survey (ACS). For geographic boundaries that are not available in the census hierarchy, like council districts, estimates were generated (see Methodology). This package allows for easy acces to the estimates displayed on CouncilCount, as well as the ability to generate new estimates using the same methodology. 
+`councilcount` is the companion package for CouncilCount, a webpage designed by the New York City Council Data Team that visualizes population data for over 100 demographic groups across various NYC geographic boundaries. Where possible, this data was sourced directly from the 5-Year American Community Survey (ACS) Data Profiles. For geographic boundaries that are not available in the census hierarchy, like council districts, estimates were generated (see Methodology). This package allows for easy acces to the estimates displayed on CouncilCount, as well as the ability to generate new estimates using the same methodology. 
 
 Visit CouncilCount at https://rnd.council.nyc.gov/councilcount/. 
 
@@ -33,40 +33,41 @@ import councilcount as cc
 
 To explore the existing CouncilCount database:
 
-* `get_councilcount_estimates()` – Creates a dataframe that provides demographic estimates, MOEs, and CVs for selected variables along chosen geographic boundaries (e.g. council
-district, borough, etc.) for a chosen ACS 5-Year survey. Pulls from existing data. Use this function if the estimates you are seeking have already been generated. 
-* `get_available_councilcount_codes()` – Provides information on all of the available demographic variables that can be
-accessed via `get_councilcount_estimates()` for a specified survey year. 
-* `get_bbl_population_estimates()` – Generates a dataframe that provides total population
-estimates at the BBL level. There are columns for various geographies, which allow for aggregation to other geography levels if desired.
+* `get_councilcount_estimates()` – Creates a dataframe that provides demographic estimates, MOEs, and CVs for selected variables along chosen geographic boundaries (e.g. council district, borough, etc.) for a chosen ACS 5-Year survey. Pulls from existing data. Use this function if the estimates you are seeking have already been generated. 
+* `get_available_councilcount_codes()` – Provides information on all of the available demographic variables that can be accessed via `get_councilcount_estimates()` for a specified survey year. 
+* `get_bbl_population_estimates()` – Generates a DataFrame that provides total population estimates at the BBL level. There are latitude and longitude columns, which allow the dataset to be spatially joined with GeoDataFrames containing geographic boundaries provided by the user. This allows for the aggregation of population estimates to custom geographies. The estimates grow increasingly reliable as they are aggregated to larger geographic regions. Do not use estimates for individual BBLs. 
 
 Here is an example, in which codes for “Female” and “Adults with
-Bachelor’s degree or higher” are used. The data is requested along 2023
-Council District boundaries for the 2018-2022 ACS.
+Bachelor’s degree or higher” will be used. The data will be requested along 2023
+Council District boundaries for the 2019-2023 ACS.
 
-First, review the codes available in the CouncilCount database:
+First, review the ACS years available for existing estimates, which will be drawn from what is currently displayed on the CouncilCount webpage:
 ```Python
-acs_year = 2022
+cc.available_years() 
+```
+Next, review the codes available in the CouncilCount database for the chosen year:
+```Python
+acs_year = 2023 
 cc.get_available_councilcount_codes(acs_year=acs_year)
 ```
 
-Then, retrieve the desired estimates.
+Then, retrieve the desired estimates for the selected year and geographic boundaries. Available geography inputs: 'councildist' (Council District), 'communitydist' (Community District), 'schooldist' (School District), 'policeprct' (Police Precinct), 'modzcta' (MODZCTA, or ZIP Codes), 'nta' (Neighborhood Tabulation Area), 'borough' (Borough), and 'city' (New York City).
 ``` Python
 var_codes = [
 "DP05_0003E", # Female
 "DP02_0068E" # Adults with Bachelor’s degree or higher
 ]
-geo = "councildist" # "councildist", "policeprct", "schooldist", "nta", "communitydist", "borough", and "city" are acceptable inputs
-boundary_year = 2023 # only necesary for Council District requests—2013 and 2023 are accetable inputs
+geo = "councildist" # "councildist", "policeprct", "schooldist", "nta", "communitydist", "modzcta", "borough", and "city" are acceptable inputs
+boundary_year = 2023 # only necessary for Council District requests—2013 and 2023 are accetable inputs
 
 cc.get_councilcount_estimates(acs_year=acs_year, geo=geo, var_codes=var_codes, boundary_year=boundary_year) 
 ```
 
-**Note:** Percent estimate variables (codes ending in 'PE') in DFs produced by `get_councilcount_estimates()` have varying denominators. To find the denominator used for a specific variable, view the 'denominator_var_code' column generated by `get_available_councilcount_codes()`. Denominators will reflect those used by the ACS in order to keep the meaning of variable codes consistent with the survey.
+**Note:** Percent estimate variables (codes ending in 'PE') in tables produced by `get_councilcount_estimates()` have varying denominators. To find the denominator used for a specific variable, view the 'denominator_var_code' column generated by `get_available_councilcount_codes()`. Denominators will reflect those used by the ACS in order to keep the meaning of variable codes consistent with the survey.
 
 In a separate example, let's review how to use `get_bbl_population_estimates()`:
 
-Simply enter the desired year. A DataFrame with BBL-level population estimates for the year, if available, will be produced.
+Simply enter the desired year (can be taken from `available_years()` as well). A DataFrame with BBL-level population estimates for the year will be produced. Remember not to use estimates for individual BBLs. Aggregation to larger geographic regions is highly encouraged.
 ```Python
 year = 2016
 cc.get_bbl_population_estimates(year=year)
@@ -74,26 +75,26 @@ cc.get_bbl_population_estimates(year=year)
 
 To generate new estimates:
 
-* `generate_new_estimates()` - Generates demographic estimates, MOEs, and CVs for a specified NYC geography. Use this function if the ACS demographic variable you are looking for is not already available in the CouncilCount database.
+* `generate_new_estimates()` - Generates demographic estimates, MOEs, and CVs for a specified NYC geography. Use this function if the ACS demographic variable you are looking for is not already available in the CouncilCount database. 
 * `get_census_api_codes()`: Pulls from the ACS 5-Year Data Profiles dictionary to show all available variable codes for a given year. Use this function to search for variables to use in `generate_new_estimates()`. You may also visit this [link](https://api.census.gov/data/2023/acs/acs5/profile/variables.html) to search in a web format (edit the year in the URL to switch ACS surveys). To view the variables available in the existing CouncilCount database, please use `get_available_councilcount_codes()` instead.
 
-Here is an example in which new estimates are created. The data is requested along school district boundaries for the 2007-2011 ACS.
-    
+Here is an example in which new estimates are created. The data is requested along school district boundaries for the 2007-2011 ACS, which was shown to be available by `available_years()` above. 
+
 First, review the codes available in the CouncilCount database. Generate your own census API key [here](https://api.census.gov/data/key_signup.html):
 ```Python
-acs_year = 2022
+acs_year = 2011
 census_api_key = "<INSERT KEY>"
 cc.get_census_api_codes(acs_year=acs_year, census_api_key=census_api_key)
 ```
  
-Then, generate the new estimates. In this case, we are generating estimates for number of married-couple households as well as the number of males 15 and over that have never been married. For each demographic code, indicate whether it is a household or person-level estimate. Codes for "total population" and "total households" must be also included if both person and household-level estimates have been requested. Output columns for these variables will also be provided.
+Then, generate the new estimates. In this case, we are generating estimates for number of married-couple households as well as the number of males 15 and over that have never been married. For each demographic code, indicate whether it is a household or person-level estimate. Codes for "total population" and "total households" must be also included if both person and household-level estimates have been requested. Output columns for these variables will also be provided. All geographies listed above as options for `get_councilcount_estimates()` work for `generate_new_estimates()` as well.
 ```Python
 demo_dict = {
     "DP02_0002E": "household", # Married-couple household
     "DP02_0025E": "person", # Males 15 and over
     "DP02_0026E": "person" # Never married males 15 and over
     }
-geo = "schooldist" # "councildist", "policeprct", "schooldist", "nta", "communitydist", "borough", and "city" are acceptable inputs
+geo = "schooldist" # "councildist", "policeprct", "schooldist", "nta", "communitydist", "modzcta", "borough", and "city" are acceptable inputs
 total_pop_code = "DP02_0088E" # Use this code for years 2020 and above. Use "DP02_0086E" for 2018 and earlier surveys. Use "DP02_0087E" for 2019. 
 total_house_code = "DP02_0001E" # This code should be correct in most cases
     
@@ -104,9 +105,10 @@ table = cc.generate_new_estimates(acs_year=acs_year, demo_dict=demo_dict, geo=ge
     
 Other functions:
 
+* `available_years()`: When run, this function will print the list of available years for all functions that require year variables.
 * `calc_percent_estimate()`: Calculates the percent estimate and percent MOE that results from dividing a numerator estimate by a denominator estimate, based on the Census Bureau's formula for doing so. Can be used to generate custom percent estimates.   
 
-Drawing on the data generated in the previous example, let's create a custom percent estimate by dividing "DP02_0026E" (never married males 15 and over) by "DP02_0025E" (males 15 and over). This will create estimates of the percent of males 15 and over that have never been married. In order for the function to work, there must be existing estimate and MOE columns for both the numerator and denominator in the DF (in this case, "DP02_0026E', "DP02_0026M", "DP02_0025E", and "DP02_0025M").
+Drawing on the data generated in the previous example, let's create a custom percent estimate by dividing "DP02_0026E" (never married males 15 and over) by "DP02_0025E" (males 15 and over). This will create estimates of the percent of males 15 and over that have never been married. In order for the function to work, there must be existing estimate and MOE columns for both the numerator and denominator in the DataFrame (in this case, "DP02_0026E", "DP02_0026M", "DP02_0025E", and "DP02_0025M").
     
 ```Python
 # generating the custom percent estimate and MOE      
@@ -115,22 +117,14 @@ cc.calc_percent_estimate(geo_df=table, num_code="DP02_0026E", denom_code="DP02_0
     
 ## Data Sources 
 
-* [The Five Year American Community Survey (ACS)](https://www.census.gov/data/developers/data-sets/acs-5year.html)
-  * 2006-2011
-  * 2012-2016
-  * 2017-2021
-  * 2018-2022
-* [Primary Land Use Tax Lot Output (PLUTO) datasets](https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page)
-  * 2011
-  * 2016
-  * 2021
-  * 2022  
+* [The Five Year American Community Survey (ACS) Data Profiles](https://www.census.gov/data/developers/data-sets/acs-5year.html)
+* [Primary Land Use Tax Lot Output (PLUTO) datasets](https://www.nyc.gov/site/planning/data-maps/open-data/dwn-pluto-mappluto.page) 
 
 ## Methodology 
 
-Estimates for over 100 ACS demographic variables were generated for the dashboard. Estimates are available at Council District, Community District, School District, Police Precinct, Neighborhood Tabulation Area, Borough, and New York City levels. CouncilCount utilizes the 5-Year ACS, meaning the data points presented on the dashboard represent 5-year averages for the listed demographic variables. Using the multiyear estimates increases the statistical reliability of the data, especially for small population subgroups and regions with low populations. 
+Estimates for over 100 ACS demographic variables were generated for the dashboard. Estimates are available at Council District, Community District, School District, Police Precinct, ZIP Code (MODZCTA), Neighborhood Tabulation Area, Borough, and New York City levels. CouncilCount utilizes the 5-Year ACS, meaning the data points presented on the dashboard represent 5-year averages for the listed demographic variables. Using the multiyear estimates increases the statistical reliability of the data, especially for small population subgroups and regions with low populations. 
 
-These estimates were generated using the 2007-2011, 2012-2016, 2017-2021, and 2018-2022 ACS 5-Year Estimates Data Profiles, which provide demographic estimates by census tract. Estimates for some geographies, like neighborhood tabulation areas (NTAs), which are built from census tracts, were generated by directly aggregating census-tract-level data. However, this method does not work for geographies that have no relation to census tracts, like council districts and police precincts. In order to generate estimates for such geographies, ACS demographic data was synthesized with building data from the 2011, 2016, 2021, and 2022 PLUTO datasets to approximate the distribution of subpopulations around the city for each time period. Estimates for all geographies (except for council districts, for which a boundary year must be specified) are available along boundary lines as they were drawn in 2020, regardless of the period chosen, in order to make comparisons possible across time. Consequently, pre-2021 ACS NTA requests will be fulfilled using the NYCC Data Team's methodology. This is because all NTA estimates from `councilcount` will be provided along 2020 NTA boundaries (which are directly comprised of 2020 census tracts), and pre-2021 ACS data is provided along 2010 census tract boundaries, making direct aggregation challenging.
+These estimates were generated using the ACS 5-Year Estimates Data Profiles, which provide demographic estimates by census tract. Estimates for some geographies, like neighborhood tabulation areas (NTAs), which are built from census tracts, were generated by directly aggregating census-tract-level data. However, this method does not work for geographies that have no relation to census tracts, like council districts and police precincts. In order to generate estimates for such geographies, ACS demographic data was synthesized with building data from the PLUTO datasets to approximate the distribution of subpopulations around the city for each time period. Estimates for all geographies (except for council districts, for which a boundary year must be specified) are available along boundary lines as they were drawn in 2020, regardless of the period chosen, in order to make comparisons possible across time. Consequently, pre-2020 ACS NTA requests will be fulfilled using the NYCC Data Team's methodology. This is because all NTA estimates from `councilcount` will be provided along 2020 NTA boundaries (which are directly comprised of 2020 census tracts), and pre-2020 ACS data is provided along 2010 census tract boundaries, making direct aggregation challenging. 
     
 New estimates will be generated according to the same methodology. 
     

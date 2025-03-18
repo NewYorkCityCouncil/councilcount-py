@@ -3,6 +3,7 @@ from importlib.resources import files
 import pandas as pd
 import numpy as np
 import geojson
+from shapely.geometry import shape
 import requests
 from warnings import warn
 
@@ -25,19 +26,18 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
     var_code_list : list of str
         A list of variable codes to retrieve from the ACS dataset (e.g., ['DP03_0045E', 'DP03_0032E']).
     level : str
-        The level of geographic aggregation desired (options include 'tract', 'nta', 'borough', and 'city')
+        The level of geographic aggregation desired (options include 'tract', 'nta', 'modzcta', 'borough', and 'city')
     census_api_key : str
         A valid API key for accessing the U.S. Census Bureau's API.
 
     Returns:
     --------
     pandas.DataFrame
-        A DataFrame containing the requested variables for all tracts within New York counties, along with a unique identifier
-        column for each tract.
-
+        A DataFrame containing the requested variable estimates for the selected geography (pulled directly from the ACS itself).
     Notes:
     ------
-    - The unique identifier for each tract is created by concatenating the tract number and county FIPS number.
+    - NTA and MODZCTA estimates are aggregated from tracts and ZCTAs, respectively. Tract, borough, and city estimates are taken directly from the survey.
+    - The unique identifier for each census tract is created by concatenating the tract number and county FIPS number.
     
     """
 
@@ -47,28 +47,42 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
     variables = ",".join(var_code_list)  # Concatenate variables into a comma-separated string
     state = "36"  # New York state
     
+    # # setting path for pulling data from internal folder
+    data_path = files("councilcount").joinpath("data") 
+
     # setting values based on geography level chosen
     if level == 'city': 
-        for_code = "place:51000" # NYC code
+        for_code = f"place:51000&in=state:{state}" # NYC code
     elif level == 'borough': 
-        for_code = "county:005,047,061,081,085" # county codes for NYC boroughs
+        for_code = f"county:005,047,061,081,085&in=state:{state}" # county codes for NYC boroughs
         # to match counties to boroughs
         conversion_dict = {'5': 'The Bronx', '47': 'Brooklyn', '61': 'Manhattan', '81': 'Queens', '85': 'Staten Island'} 
+    elif level == 'modzcta':
+        # defining NYC ZCTAs to pull data for
+        nyc_zctas = pd.read_csv(f'{data_path}/nyc-zcta-list.csv')
+        nyc_zctas_str = str(nyc_zctas['ZCTA5CE20'].to_list()).replace(' ', '').replace('[', '').replace(']', '')
+        for_code =f"zip code tabulation area:{nyc_zctas_str}" # all NYC ZCTAs
+        # converts zcta to modzcta
+        file_path = f'{data_path}/modzcta-boundaries.geojson'
+        with open(file_path) as f: df = geojson.load(f)
+        features = df["features"]
+        zcta_to_modzcta_df = pd.json_normalize([feature["properties"] for feature in features])
+        modzcta_dict = dict(zip(zcta_to_modzcta_df['ZCTA'],zcta_to_modzcta_df['MODZCTA']))
+        # exploding the dict
+        conversion_dict = {key: v for k, v in modzcta_dict.items() for key in k.split(', ')}
     elif level in ['tract', 'nta']: 
-        for_code = 'tract:*&in=county:005,047,061,081,085' # all NYC census tracts
+        for_code = f'tract:*&in=county:005,047,061,081,085&in=state:{state}' # all NYC census tracts
         if level == 'nta':
             # to help build NTAs out of census tracts
-            data_path = files("councilcount").joinpath("data") # setting path
             nta_conversion = pd.read_csv(f'{data_path}/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
             conversion_dict = pd.Series(nta_conversion['NTACode'].values,index=nta_conversion['GEOID'].astype(str)).to_dict() 
             # need to pull in df with both names and codes to create column with NTA full names 
-            data_path = files("councilcount").joinpath("data") # setting path
             file_path = f'{data_path}/nta-boundaries.geojson'
             with open(file_path) as f: df = geojson.load(f)
             features = df["features"]
             nta_name_df = pd.json_normalize([feature["properties"] for feature in features])
         
-    url = f'{base_url}/{acs_year}/{dataset}?get={variables}&for={for_code}&in=state:{state}&key={census_api_key}'
+    url = f'{base_url}/{acs_year}/{dataset}?get={variables}&for={for_code}&key={census_api_key}'
     response = requests.get(url)
 
     # check the response
@@ -99,6 +113,10 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
                 demo_df['ntaname'] = demo_df[level].map(nta_names)                      
                 demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning  
                 demo_df.insert(1, 'ntaname', demo_df.pop('ntaname'))
+            elif level == 'modzcta':
+                demo_df[level] = demo_df['zip code tabulation area'].map(conversion_dict)
+                demo_df = demo_df.drop(columns=['zip code tabulation area'])
+                demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning 
             elif level == 'borough':
                 # pair county FIPS code to borough name
                 demo_df['county'] = demo_df['county'].astype(int).astype(str)
@@ -250,6 +268,8 @@ def _generate_bbl_estimates(acs_year, demo_dict, pop_est_df, census_api_key, tot
         census_year = 2010
     elif acs_year >= 2020: # censuses from these years use 2020 census tracts 
         census_year = 2020
+    elif acs_year < 2010: # probably won't come up, but including this as a safeguard
+        raise ValueError(f"{acs_year} is not a supported input. Please choose from years 2010 or later.")
         
     # adding unique identifier column: '{census_year}_tract_id' for pop_est_df
     county_fips = {'BX':'5', 'BK':'47', 'MN':'61', 'QN':'81', 'SI':'85'}    
@@ -411,6 +431,9 @@ def _generate_bbl_variances(acs_year, demo_dict, census_api_key, total_pop_code 
         census_year = 2010
     elif acs_year >= 2020: # censuses from these years use 2020 census tracts   
         census_year = 2020
+    elif acs_year < 2010: # probably won't come up, but including this as a safeguard
+        raise ValueError(f"{acs_year} is not a supported input. Please choose from years 2010 or later.")
+        
         
     # picking which denoms to include
     denom_list = [code for code in (total_pop_code, total_house_code) if code is not None]
@@ -627,6 +650,8 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
         census_year = 2010
     elif acs_year >= 2020: # censuses from these years use 2020 census tracts 
         census_year = 2020
+    elif acs_year < 2010: # probably won't come up, but including this as a safeguard
+        raise ValueError(f"{acs_year} is not a supported input. Please choose from years 2010 or later.")    
     
     # setting boundary year (only applies to councildist)
     boundary_ext = f'_{boundary_year}' if (boundary_year) and (geo == 'councildist') else ''
@@ -677,7 +702,40 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     # return the final DataFrame
     return geo_df    
 
-######## VIEW CENSUS API CODES  
+######## VIEW AVAILABLE INPUTS  
+
+def available_years():
+
+    """
+    Prints the available input years for all package functions that require year variables.
+
+    Parameters:
+    ----------
+        None
+
+    Returns:
+    --------
+        None 
+
+    """
+
+    # get the data directory where the data is located
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # construct the path to the data folder
+    data_path = os.path.join(script_dir, "data")
+
+    # find years available for new estimates (also years available for BBL-level population estimates)
+    bbl_file_names = [f for f in os.listdir(data_path) if "bbl-population-estimates_" in f]
+    bbl_years = sorted([name[25:29] for name in bbl_file_names])
+    bbl_acs_years = [f'{int(year)-4}-{year}' for year in bbl_years]
+    bbl_years_list = ', '.join(bbl_years) # PLUTO years
+    bbl_acs_list = ', '.join(bbl_acs_years) # for ACS 5-Year surveys
+
+    # print results
+    print(f'5-Year ACS Surveys available: {bbl_acs_list}')
+    print(f"\nNote: when using `councilcount` functions, only include the end year as the input for the year variable (e.g. '2023' for the 2019-2023 survey).")
+
+    return 
 
 def get_census_api_codes(acs_year, census_api_key):
     
@@ -686,7 +744,7 @@ def get_census_api_codes(acs_year, census_api_key):
     This function pulls from the American Community Survey (ACS) 5-Year Data Profiles dictionary to show all variable
     codes for a given year, including those beyond the existing CouncilCount database. Each variable code represents a demographic
     estimate provided by the ACS, which can be accessed via an API. Visit
-    https://api.census.gov/data/<acs_year>/acs/acs5/profile/variables.html to view the options in web format.
+    https://api.census.gov/data/<INSERT ACS YEAR>/acs/acs5/profile/variables.html to view the options in web format.
 
     Parameters:
     -----------
@@ -700,7 +758,7 @@ def get_census_api_codes(acs_year, census_api_key):
         DataFrame: A table with 'variable_code' and 'variable_description' columns. 
 
     Notes:
-        - This function pulls directly from https://api.census.gov/data/{acs_year}/acs/acs5/profile/variables.html.
+        - This function pulls directly from https://api.census.gov/data/<INSERT ACS YEAR>/acs/acs5/profile/variables.html.
         - These variable codes may be used as inputs for councilcount functions that generate new estimates, like
         `generate_new_estimates()`.
         - To view the variables that are currently covered by the CouncilCount database, use `get_available_councilcount_codes()`.
@@ -744,7 +802,7 @@ def get_available_councilcount_codes(acs_year=None):
     """
     Retrieve the available American Community Survey (ACS) variable codes that currently exist in the CouncilCount database for a
     given survey year. Each variable code represents a demographic estimate provided by the ACS, which can be accessed via an API.
-    Visit https://api.census.gov/data/<acs_year>/acs/acs5/profile/variables.html to view the options in web format.
+    Visit https://api.census.gov/data/<INPUT ACS YEAR>/acs/acs5/profile/variables.html to view the options in web format.
 
     Parameters:
     -----------
@@ -810,7 +868,7 @@ def get_available_councilcount_codes(acs_year=None):
 def get_bbl_population_estimates(year=None):
     
     """
-    Produces a dataframe containing BBL-level population estimates for a specified year.
+    Produces a DataFrame containing BBL-level population estimates for a specified year.
 
     Parameters:
     -----------
@@ -819,20 +877,21 @@ def get_bbl_population_estimates(year=None):
 
     Returns:
     --------
-    pandas.DataFrame: 
+    DataFrame: 
         A table with population estimates by BBL ('bbl_population_estimate' column). 
         
     Notes:
     ------
-        - The DF includes multiple geography columns. This will allow for the aggregation of population numbers to various
-        geographic levels. 
+        - The output includes latitude and longitude columns. This will allow for the aggregation of population numbers
+        to various geography levels. Simply convert the table to a GeoDataframe with a geometry column, perform a spatial 
+        join with a second GeoDataFrame that contains polygons for the desired geographic regions, and then aggregate population 
+        numbers to that level. 
         - Avoid using estimates for individual BBLs; the more aggregation, the less error. 
-        - Population numbers were estimated by multiplying the 'unitsres' and 'ct_population_density' columns. 'unitsres'
-        specifies the number of residential units present at each BBL, and 'ct_population_density' represents the population
-        density for units in each tract (division of the total population by the total number of residential units in each census
-        tract).
+        - Population numbers were estimated by multiplying the total number of residential units within a BBL by the surrounding census
+        tract's housing population density (census tract total population / census tract total residential units).
         
     """
+
     if year: year = str(year) # so don't get error if accidentally input wrong dtype
 
     # get the data directory where the data is located
@@ -841,17 +900,13 @@ def get_bbl_population_estimates(year=None):
     data_path = os.path.join(script_dir, "data")
 
     # find all available years
-    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
-    bbl_csv_names = [name for name in csv_names if "bbl-population-estimates_" in name]
-    bbl_years = [name[25:29] for name in bbl_csv_names]
-    
+    bbl_file_names = [f for f in os.listdir(data_path) if "bbl-population-estimates_" in f]
+    bbl_years = [name[25:29] for name in bbl_file_names]
+
     # if year is not chosen, set default to latest year
     if year is None:
         year = max(bbl_years)
-    
-    # construct the name of the dataset based on the year
-    bbl_name = f"bbl-population-estimates_{year}.csv"
-    
+
     # error message if unavailable survey year selected
     if year not in bbl_years:
         available_years = "\n".join(bbl_years)
@@ -859,6 +914,9 @@ def get_bbl_population_estimates(year=None):
             f"This year is not available.\n"
             f"Please choose from the following:\n{available_years}"
         )
+
+    # construct the name of the dataset based on the year
+    bbl_name = f"bbl-population-estimates_{year}.csv"
     
     # retrieve the dataset
     file_path = f'{data_path}/{bbl_name}'
@@ -877,14 +935,14 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     Parameters:
     ----------
         acs_year : int
-            The 5-Year ACS end-year to fetch data for (e.g., 2022 for the 2018-2022 ACS).  d
+            The 5-Year ACS end-year to fetch data for (e.g., 2022 for the 2018-2022 ACS).
         demo_dict : dict
             Dict keys should be the ACS variable codes for desired demographic groups. Dict values should
             specify whether the variable is 'person' or 'household' level. Codes must end in 'E', indicating that they are
             estimate codes. Example: {'DP05_0001E': 'person', 'DP02_0059E': 'household'}. See Notes.
         geo : str
             The geographic level for estimates. Options currently include 'councildist', 'communitydist', 'schooldist',
-            'policeprct', 'nta', 'borough', 'city'.
+            'policeprct', 'modzcta', 'nta', 'borough', 'city'.
         census_api_key : str
             User's Census API key.
         total_pop_code : str, optional
@@ -912,9 +970,9 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         instead.
         - Geographies fitting into the census hierachy will receive estimates directly from the ACS. In all other cases, estimates generated 
         using the NYCC Data Team's methodology will be provided. 
-        - As an exception, pre-2021 ACS NTA requests will be fulfilled using the NYCC Data Team's methodology. 
+        - As an exception, pre-2020 ACS NTA requests will be fulfilled using the NYCC Data Team's methodology. 
         This is because all NTA estimates from `councilcount` will be provided along 2020 NTA boundaries 
-        (which are directly comprised of 2020 census tracts), and pre-2021 ACS data is provided along 2010 census tract 
+        (which are directly comprised of 2020 census tracts), and pre-2020 ACS data is provided along 2010 census tract 
         boundaries, making direct aggregation challenging.
         
     """    
@@ -962,7 +1020,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         boundary_year = None
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
 
-    # selections for which estimates must be created using thr Data Team's methodology    
+    # selections for which estimates must be created using the Data Team's methodology    
     if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo == 'nta') and (acs_year < 2021)):        
         
         # generating blank BBL-level population estimates df
@@ -978,7 +1036,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         raw_geo_df = _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, total_pop_code, total_house_code, boundary_year)
       
     # selections for which estimates can be directly taken from the ACS
-    elif (geo in ['borough','city']) or ((geo == 'nta') and (acs_year >= 2021)):
+    elif (geo in ['borough','city']) or ((geo in ['nta', 'modzcta']) and (acs_year >= 2021)):
         
         # setting census year (the year census tracts are associated with) 
         if (acs_year < 2020) and (acs_year >= 2010): # censuses from these years use 2010 census tracts 
@@ -1015,12 +1073,12 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
         acs_year : int
             Desired 5-Year ACS year (e.g., "2021" for the 2017-2021 5-Year ACS).
         geo : str)
-            Geographic level of aggregation desired. Options include "borough", "communitydist", "councildist", "nta",
-            "policeprct", "schooldist", or "city".
+            Geographic level of aggregation desired. Options include "borough", "communitydist", "councildist", "modzcta", 
+            "nta", "policeprct", "schooldist", or "city".
         var_codes : list or str
             List of chosen variable codes selected from the 'estimate_var_codes' column produced by the
-            `available_councilcount_codes()`
-            function. Default is "all", which provides estimates for all available variable codes.
+            `available_councilcount_codes()` function. Default is "all", which provides estimates for all 
+            available variable codes.
         boundary_year : int
             Year for the geographic boundary (relevant for "councildist"). Options: 2013, 2023.
 
