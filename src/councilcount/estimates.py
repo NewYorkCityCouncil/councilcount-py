@@ -115,6 +115,7 @@ def _pull_raw_census_data(acs_year, census_year, var_code_list, level, census_ap
                 demo_df.insert(1, 'ntaname', demo_df.pop('ntaname'))
             elif level == 'modzcta':
                 demo_df[level] = demo_df['zip code tabulation area'].map(conversion_dict)
+                demo_df = demo_df.groupby(level).sum().reset_index()
                 demo_df = demo_df.drop(columns=['zip code tabulation area'])
                 demo_df.insert(0, level, demo_df.pop(level)) # move region column to the beginning 
             elif level == 'borough':
@@ -667,6 +668,7 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     # create dataframe
     features = geo_data["features"]
     geo_df = pd.json_normalize([feature["properties"] for feature in features])
+    # geo_df = pd.read_csv(file_path)
     geo_df = geo_df.set_index(f'{geo}{boundary_ext}')
 
     # prepare denominators
@@ -728,7 +730,6 @@ def available_years():
     bbl_file_names = [f for f in os.listdir(data_path) if "bbl-population-estimates_" in f]
     bbl_years = sorted([name[25:29] for name in bbl_file_names])
     bbl_acs_years = [f'{int(year)-4}-{year}' for year in bbl_years]
-    bbl_years_list = ', '.join(bbl_years) # PLUTO years
     bbl_acs_list = ', '.join(bbl_acs_years) # for ACS 5-Year surveys
 
     # print results
@@ -844,22 +845,22 @@ def get_available_councilcount_codes(acs_year=None):
     if acs_year is None:
         acs_year = max(dictionary_years)
 
-    # construct the name of the dataset based on the year
-    dict_name = f"data_dictionary_{acs_year}.csv"
-
     # error message if the requested year is unavailable
     if acs_year not in dictionary_years:
-        available_years = "\n".join(dictionary_years)
+        available_years = "\n".join(sorted(dictionary_years))
         raise ValueError(
             f"This year is not available.\n"
             f"Please choose from the following:\n{available_years}"
         )
-
-    print(f"Printing data dictionary for the {acs_year} 5-Year ACS")
+    
+    # construct the name of the dataset based on the year
+    dict_name = f"data_dictionary_{acs_year}.csv"
 
     # retrieve the data dictionary
     file_path = f'{data_path}/{dict_name}'
     df = pd.read_csv(file_path)
+
+    print(f"Printing data dictionary for the {acs_year} 5-Year ACS")
 
     return df
 
@@ -909,20 +910,22 @@ def get_bbl_population_estimates(year=None):
 
     # error message if unavailable survey year selected
     if year not in bbl_years:
-        available_years = "\n".join(bbl_years)
+        available_years = "\n".join(sorted(bbl_years))
         raise ValueError(
             f"This year is not available.\n"
             f"Please choose from the following:\n{available_years}"
         )
-
+    
     # construct the name of the dataset based on the year
     bbl_name = f"bbl-population-estimates_{year}.csv"
     
+    print(f"Printing BBL population estimates for {year}")
+
     # retrieve the dataset
     file_path = f'{data_path}/{bbl_name}'
     df = pd.read_csv(file_path)
     
-    return df
+    return df[['borough', 'block', 'lot', 'latitude', 'longitude','bbl_population_estimate']]
 
 #
 
@@ -1024,7 +1027,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo == 'nta') and (acs_year < 2021)):        
         
         # generating blank BBL-level population estimates df
-        blank_pop_est_df = get_bbl_population_estimates(acs_year)
+        blank_pop_est_df = pd.read_csv(f'{data_path}/bbl-population-estimates_{acs_year}.csv')# get_bbl_population_estimates(acs_year)
 
         # adding columns for BBL-level demographic estimates
         pop_est_df = _generate_bbl_estimates(acs_year, demo_dict, blank_pop_est_df, census_api_key, total_pop_code, total_house_code)
@@ -1058,7 +1061,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     # cleaning
     cleaned_geo_df = _reorder_columns(raw_geo_df)
     
-    return cleaned_geo_df 
+    return cleaned_geo_df
 
 #
 
@@ -1129,15 +1132,17 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
         # building paths
         if geo == 'city':
             file_path = f'{data_path}/nyc-wide_estimates_{acs_year}.csv'
-            geo_df = pd.read_csv(file_path)
+            # geo_df = pd.read_csv(file_path)
         else:
-            file_path = f'{data_path}/{geo}{add_boundary_year}-geographies_{acs_year}.geojson'
-            
-            with open(file_path) as f:
-                gj = geojson.load(f)
+            file_path = f'{data_path}/{geo}{add_boundary_year}-geographies_{acs_year}.csv'#.geojson'
 
-            features = gj['features']
-            geo_df = pd.json_normalize([feature['properties'] for feature in features])
+        geo_df = pd.read_csv(file_path)
+            
+            # with open(file_path) as f:
+            #     gj = geojson.load(f)
+
+            # features = gj['features']
+            # geo_df = pd.json_normalize([feature['properties'] for feature in features])
 
         # if list of variable codes requested, subset
         if var_codes == 'all': 
@@ -1177,7 +1182,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
             # else: 
             #     geo_df = geo_df[master_col_list + ['geometry']] # adding all desired columns + geometry column 
                     
-            return geo_df[master_col_list]
+            return geo_df[master_col_list].sort_values(master_col_list) 
 
     # check input cases
     if acs_year is None:

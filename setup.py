@@ -2,7 +2,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="councilcount",
-    version="0.3.9",
+    version="0.3.20",
     description="The `councilcount` package allows easy access to ACS population data across various NYC geographic boundaries. For the boundaries that are not native to the ACS, such as council districts, an estimate is provided.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
@@ -30,7 +30,6 @@ setup(
         "python-dateutil==2.9.0.post0",
         "pytz==2024.2", # pytz==2025.1
         "requests==2.32.3",
-        # "shapely==2.0.7",
         "six==1.17.0",
         "tzdata==2025.1",
         "urllib3==2.3.0",
