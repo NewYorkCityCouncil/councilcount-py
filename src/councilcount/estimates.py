@@ -702,7 +702,7 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     geo_df = _get_MOE_and_CV(demo_dict, variance_df, pop_est_df, census_year, geo_df, geo, total_pop_code, total_house_code, boundary_year)  
         
     # return the final DataFrame
-    return geo_df    
+    return geo_df.reset_index() 
 
 ######## VIEW AVAILABLE INPUTS  
 
@@ -998,7 +998,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
     geo_names = geo_names + replacements 
 
     # record available years
-    available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
+    available_years = sorted(set(int(f.split('_')[-1][:4]) for f in geo_file_names if f.split('_')[-1][:4].isdigit()))
 
     # ensuring correct geo input
     if geo not in geo_names:
@@ -1024,7 +1024,7 @@ def generate_new_estimates(acs_year, demo_dict, geo, census_api_key, total_pop_c
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
 
     # selections for which estimates must be created using the Data Team's methodology    
-    if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo == 'nta') and (acs_year < 2021)):        
+    if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo in ['nta', 'modzcta']) and (acs_year < 2021)):        
         
         # generating blank BBL-level population estimates df
         blank_pop_est_df = pd.read_csv(f'{data_path}/bbl-population-estimates_{acs_year}.csv')# get_bbl_population_estimates(acs_year)
@@ -1117,7 +1117,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     geo_names = geo_names + replacements 
 
     # record available years
-    available_years = sorted(set(int(f.split('_')[-1][:4]) for f in file_names if f.split('_')[-1][:4].isdigit()))
+    available_years = sorted(set(int(f.split('_')[-1][:4]) for f in geo_file_names if f.split('_')[-1][:4].isdigit()))
 
     def read_geos(geo, boundary_year=None):
         """
@@ -1163,7 +1163,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
                 # check if the variable code is available in the data
                 if var_code not in geo_df.columns:
                     raise ValueError(f"Estimates for the variable code {var_code} are not available. Check for any typos.\n"
-                                     "View available variable codes using get_ACS_variables(), or input 'all' to view all columns.")
+                                     "View available variable codes using get_available_councilcount_codes(), or input 'all' to view all columns.")
                 else:
                     var_code_base = var_code[:9]
                     var_col_list = [
