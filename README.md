@@ -25,6 +25,22 @@ import councilcount as cc
 
 - Python version 3.9 or above is needed.
 
+To install for, please use the following code:
+
+```R
+install.packages('reticulate')
+library(reticulate)
+py_install("councilcount")
+cc <- import("councilcount")
+```
+You may be prompted to import other Python packages using the same structure (import("<PACKAGE NAME>")) before `councilcount` successfully installs.
+
+To access functions while using R, use this template:
+
+```R
+cc$<FUNCTION NAME>
+```
+
 ### Functions
 
 `councilcount` includes functions that allow users to pull from the existing database of estimates currently displayed on the CouncilCount webpage, as well as to generate completely new estimates.
