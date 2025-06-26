@@ -29,7 +29,7 @@ library(reticulate)
 py_install("councilcount")
 cc <- import("councilcount")
 ```
-You may be prompted to import other Python packages using the same structure (import(" <PACKAGE NAME> ")) before `councilcount` successfully installs.
+You may be prompted to import other Python packages using the same structure (import("package")) before `councilcount` successfully installs.
 
 To access functions while using R, use this template:
 
