@@ -35,6 +35,10 @@ To access functions while using R, use this template:
 
 ```R
 cc$<FUNCTION NAME>
+
+# here is an example
+acs_year = '2023' 
+cc$get_available_councilcount_codes(acs_year=acs_year)
 ```
 
 # Prerequisites
