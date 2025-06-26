@@ -21,11 +21,7 @@ Then import the package in Python:
 import councilcount as cc
 ```
 
-# Prerequisites
-
-- Python version 3.9 or above is needed.
-
-To install for, please use the following code:
+To install for R, please use the following code:
 
 ```R
 install.packages('reticulate')
@@ -40,6 +36,10 @@ To access functions while using R, use this template:
 ```R
 cc$<FUNCTION NAME>
 ```
+
+# Prerequisites
+
+- Python version 3.9 or above is needed.
 
 ### Functions
 
