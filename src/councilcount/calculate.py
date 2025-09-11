@@ -1,7 +1,7 @@
 import numpy as np
 from .estimates import _reorder_columns
 
-def calc_percent_estimate(geo_df, num_code, denom_code): 
+def calc_percent_estimate(geo_df, geo, num_code, denom_code): 
     
     """
     Calculates the percent estimate and percent margin of error (MOE) that comes from dividing a numerator estimate by a
@@ -11,6 +11,9 @@ def calc_percent_estimate(geo_df, num_code, denom_code):
     -----------
     geo_df: dataframe
         DataFrame containing estimates and MOEs.
+    geo : str
+        The geographic level for estimates. Options currently include 'councildist', 'communitydist', 'schooldist',
+        'policeprct', 'modzcta', 'nta', 'borough', 'city'.
     num_code: str
         Code for the numerator in the census API.
     denom_code: str
@@ -62,5 +65,5 @@ def calc_percent_estimate(geo_df, num_code, denom_code):
     
     geo_df.replace([np.inf, -np.inf], np.nan, inplace=True)  # for any inf values created because of division by 0
 
-    return _reorder_columns(geo_df)
+    return _reorder_columns(geo_df, geo)
 
