@@ -1214,8 +1214,8 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
             
             # list of columns for chosen variable(s) if "all" NOT selected
             master_col_list = [f'{geo}{add_boundary_year}'] 
-
-           if not isinstance(var_codes, list):
+            
+            if not isinstance(var_codes, list):
                 var_codes = [var_codes]
             
             # creating list of desired variables names (for sub-setting final table)
