@@ -1177,7 +1177,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     # record available years
     available_years = sorted(set(int(f.split('_')[-1][:4]) for f in geo_file_names if f.split('_')[-1][:4].isdigit()))
 
-    def read_geos(geo, boundary_year=None):
+    def read_geos(geo, boundary_year=None, var_codes=var_codes):
         """
         Internal function to read and wrangle geo files.
         """
@@ -1255,7 +1255,7 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     elif (geo == "councildist") and ((boundary_year not in [2013, 2023]) | (boundary_year == None)):
         warn("`boundary_year` must be set to 2013 or 2023 when `geo` is 'councildist'. Defaulting to 2023.")
         boundary_year = 2023
-        return read_geos(geo, boundary_year)
+        return read_geos(geo, boundary_year, var_codes)
     elif acs_year not in available_years:
         raise ValueError(f"The ACS year {acs_year} could not be found. Available options are:\n" +
                          ", ".join(map(str, available_years)))
@@ -1264,6 +1264,6 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
                          ", ".join(geo_names))
     elif (geo != "councildist") and (boundary_year is not None):
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
-        return read_geos(geo)
+        return read_geos(geo, None, var_codes)
     else:
-        return read_geos(geo, boundary_year)
+        return read_geos(geo, boundary_year, var_codes)
