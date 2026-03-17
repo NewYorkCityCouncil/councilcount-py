@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from importlib.resources import files
 import pandas as pd
 import numpy as np
@@ -11,8 +10,8 @@ from functools import lru_cache
 ######## CONSTANTS
 BASE_URL = "https://api.census.gov/data"
 STATE = "36" # code for New York state
-DATA_PATH = files("councilcount").joinpath("data")
-#DATA_PATH = Path(__file__).parent.resolve().joinpath("data")
+# DATA_PATH = files("councilcount").joinpath("data")
+DATA_PATH = "/Users/LLopez-Jensen/Documents/GitHub/councilcount-py/src/councilcount/data"
 API_KEY =  "f15e9a7a298d1c9306f8a2f4a2ca99e1476247fc" # Update as necessary
 
 ######## HELPER FUNCTIONS
@@ -185,8 +184,9 @@ def _harmonize_variables(df, PUMS_year):
     new_variables = []
 
     disharmony = [
-        "R65", "CIT", "DECADE", "ENG", "NP", "VEH", "JWTRNS", "JWTR", "JWRIP", "ESR", "MIL", "RETP", "SSP", "SSIP", "PAP", "POVPIP", 
-        "SCHG", "COMPOTHX", "TABLET", "SCHL", "POBP", "LANP", "OCPIP", "GRPIP", "HISP", "HINCP", "NAICSP", "NAICSP07", "AGEP"
+        "MIG", "LANX", "HFL", "R18", "R65", "FS", "TEL", "DIS", "HICOV", "PRIVCOV", "PUBCOV", "R65", "CIT", "DECADE", "ENG", "NP", 
+        "VEH", "JWTRNS", "JWTR", "JWRIP", "TEN", "ESR", "MIL", "RETP", "SSP", "SSIP", "PAP", "POVPIP", "SCHG", "SCHL", "POBP", 
+        "WAOB", "LANP", "OCPIP", "GRPIP", "HISP", "HINCP", "NAICSP", "NAICSP07", "AGEP", "MAR", "ADJINC", "TYPEHUGQ", "TYPE"
         ]
     to_harmonize = [col for col in df.columns if col in disharmony]
     
@@ -195,12 +195,34 @@ def _harmonize_variables(df, PUMS_year):
         numeric_cache[var] = pd.to_numeric(df[var], errors="coerce")
 
     # Get ahead of some special cases before entering harmonization loop
-    computer_sources = {"TABLET", "COMPOTHX"} & set(df.columns)
+    
+    # Civilian Noninstitutionalized Population
+    civ_ninst = None
+    type_col = "TYPEHUGQ" if PUMS_year > 2020 else "TYPE"
+
+    if type_col in df.columns and "ESR" in df.columns:
+        civ_ninst = (df[type_col].astype(str) != "2") & (numeric_cache["ESR"] != 4)
+    
+    computer_sources = {"TABLET", "COMPOTHX", "SMARTPHONE"} & set(df.columns)
     if computer_sources:
         has_computer = df[list(computer_sources)].eq("1").any(axis=1)
         df["COMPUTER"] = np.where(has_computer, "1", "2")
+
+        df.loc[df["TABLET"].eq("0"), "TABLET"] = pd.NA # Clean up these columns, they're not useful
+        df.loc[df["COMPOTHX"].eq("0"), "COMPOTHX"] = pd.NA
+        df.loc[df["SMARTPHONE"].eq("0"), "SMARTPHONE"] = pd.NA
+
         new_variables += ["COMPUTER"]
-    # N.B. that HISPEED checks for broadband internet service, not a subscription
+
+    bband_sources = {"HISPEED", "BROADBND"} & set(df.columns)
+    if bband_sources:
+        has_bband = df[list(bband_sources)].eq("1").any(axis=1)
+        df["BBAND"] = np.where(has_bband, "1", "2")
+
+        df.loc[df["HISPEED"].eq("0"), "HISPEED"] = pd.NA
+        df.loc[df["BROADBND"].eq("0"), "BROADBND"] = pd.NA
+
+        new_variables += ["BBAND"]
 
     if "RAC1P" in df.columns:
         r = pd.to_numeric(df["RAC1P"], errors="coerce")
@@ -210,41 +232,76 @@ def _harmonize_variables(df, PUMS_year):
     for var in to_harmonize:
         s = numeric_cache[var]
 
-        if var == "R65":
+        if var in ["MIG", "LANX", "HFL"]:
+            df.loc[s == 0, var] = pd.NA # Outside the universe we'd like to estimate.
+        
+        elif var in ["R18", "FS"]:
+            df.loc[s != 1, var] = pd.NA # We only estimate these variables at 1
+
+        elif var == "TEL":
+            df.loc[s != 2, var] = pd.NA # Only estimate at 2
+
+        elif var in ["DIS", "HICOV", "PRIVCOV", "PUBCOV"] and civ_ninst is not None:
+            # Count observations of these variables in people outside of civ_ninst as NA to align with ACS.
+            df.loc[~civ_ninst, var] = pd.NA
+            if var != "HICOV":
+                df.loc[s == 2, var] = pd.NA # HICOV is the only one of these where we estimate "no"s
+
+        elif var == "R65":
             df.loc[s == 2, var] = "1" # No need to distinguish between 1 or multiple 65yos in household
+            df.loc[s < 1, var] = pd.NA
 
         elif var == "CIT":
             df.loc[s == 3, var] = "2" # Born in Puerto Rico, U.S. Island areas, or abroad to American parent(s)
 
         elif var == "DECADE":
             df.loc[s.between(1, 4), var] = "5" # Before 1990
+            df.loc[s == 0, var] = pd.NA # Born in the US: N/A.
 
         elif var == "ENG":
             df.loc[s.between(3, 4), var] = "2" # Speaks English less than "very well"
+            df.loc[s == 0, var] = pd.NA # <5/speaks only English: N/A
 
         elif var in ["NP", "VEH"]:
             df.loc[s >= 4, var] = "4+" # Top-codes 4+ person households and ownership of 4+ vehicles
+            df.loc[s == -1, var] = pd.NA
 
         elif var in ["JWTRNS", "JWTR"]: # JWTR appears in place of JWTRNS for 2016 and 2011 data
             df.loc[s.between(3, 6), var] = "2" # Public transit (bus, subway, commuter rail, light rail, ferryboat)
+            df.loc[s == 0, var] = pd.NA
         
         elif var == "JWRIP":
             df.loc[s.between(3, 10), var] = "2" # 2+ person carpool
+            df.loc[s == 0, var] = pd.NA
         # For commute to work, JWRIP1 = Drove, JWRIP2 = Carpool, JWTR(NS)2 = Transit, JWTR(NS)10 = Walked, JWTR(NS)11 = WFH
 
+        elif var == "TEN":
+            df.loc[s == 0, var] = pd.NA
+            
+            # Harmonize homeowner count to only include those with the financial info required for ACS
+            if all(col in df.columns for col in ["OCPIP", "HINCP"]):
+                mask_owner = ((s == 1) & (df["OCPIP"].isna() | (numeric_cache["HINCP"] <= 0)))
+                df.loc[mask_owner, "TEN"] = pd.NA
+            # Harmonize renter count symmetrically
+            if all(col in df.columns for col in ["GRPIP", "HINCP"]):
+                mask_renter = ((s == 3) & (df["GRPIP"].isna() | (numeric_cache["HINCP"] <= 0)))
+                df.loc[mask_renter, "TEN"] = pd.NA
+
         elif var == "ESR":
-            employed = s.isin([2, 4, 5]) # All count as "employed"
-            df.loc[employed, var] = "1"            
+            df.loc[s == 2, var] = "1" # Civilian employed
+            df.loc[s == 5, var] = "4" # In the military
+            df.loc[s.isin([0, 6]), var] = pd.NA # <16 (NA) or NILF (made redundant by LBR_FRC2 below)
             
             # "In the labor force" can be calculated as ESR other than "0" or "6".
             lbr = pd.Series(pd.NA, index=df.index)
             lbr[s.between(1, 5)] = "1"
-            lbr[s.isin([0, 6])] = "2"
+            lbr[s == 6] = "2"
             df["LBR_FRC"] = lbr
             new_variables += ["LBR_FRC"]
             # Unemployment rate can later be calculated as ESR3 / LBR_FRC1.
 
         elif var == "MIL":
+            df.loc[s == 0, var] = pd.NA # <17 years old
             if PUMS_year > 2011:
                 df.loc[s == 3, var] = "1" # Counting active military training as "in the armed forces"
             # 2 = "on active duty in the past, but not now" -> "veteran"
@@ -258,6 +315,7 @@ def _harmonize_variables(df, PUMS_year):
             df.loc[s > 0, var] = "1" # Person with supplementary income
 
         elif var == "POVPIP":
+            df.loc[s == -1, var] = pd.NA
             df.loc[s.between(0, 99), var] = "Below 100 percent"
             df.loc[s.between(100, 149), var] = "100 to 149 percent"
             df.loc[s >= 150, var] = "At or above 150 percent"
@@ -285,8 +343,13 @@ def _harmonize_variables(df, PUMS_year):
                 ]
             for lo, hi, label in bins:
                 df.loc[s.between(lo, hi), var] = label
+            
+            # Restrict sample to 25+ to match ACS
+            if "AGEP" in df.columns:
+                df.loc[numeric_cache["AGEP"] < 25, "SCHL"] = pd.NA
 
         elif var == "SCHG":
+            df.loc[s == 0, var] = pd.NA
             if PUMS_year > 2011:
                 bins = [
                     (3, 10, "Grades 1-8"),
@@ -303,26 +366,50 @@ def _harmonize_variables(df, PUMS_year):
                 df.loc[s.between(lo, hi), var] = label
             
         elif var == "POBP":
+        # Use POBP for US states and Oceania, as the WAOB categories for these regions are too broad
             bins = [
                 (36, 36, "New York"),
                 (1, 35, "Diff State"), # Born in a different state or DC
                 (37, 56, "Diff State"),
-                (60, 78, "PR ISL AREAS"), # Born in Puerto Rico or US Island Areas
-                (100, 169, "EUROPE"), # Foreign Born, Europe
-                (200, 254, "ASIA"), # Foreign Born, Asia
-                (300, 301, "NORTHERN AMERICA"), # Foreign Born, Northern America (Bermuda & Canada, per ACS definition)
-                (303, 399, "LATIN AMERICA"), # Foreign Born, Latin America (includes "Americas, Not Specified")
-                (400, 469, "AFRICA"), # Foreign Born, Africa
                 (501, 527, "OCEANIA") # Foreign Born, Oceania
             ]
-            for lo, hi, label in bins:
-                df.loc[s.between(lo, hi), var] = label
-        # POBP == 554 (Other US Island Areas, Oceania, Not Specified, or at Sea) is left unharmonized.
+            # Default to NA, check for NATIVITY before applying additional harmonization
+            df[var] = pd.NA
+            has_nativity = "NATIVITY" in df.columns
 
+            for lo, hi, label in bins:
+                mask = s.between(lo, hi)
+                if lo >= 100 and has_nativity:
+                    mask = mask & (df["NATIVITY"].astype(str) == "2")
+                df.loc[mask, var] = label
+
+        elif var == "WAOB":
+        # Use WAOB for non-Oceania foreign born, as the POBP categories for these regions are too restrictive
+            bins = [
+                (5, "EUROPE"), # Foreign Born, Europe
+                (4, "ASIA"), # Foreign Born, Asia
+                (7, "NORTHERN AMERICA"), # Foreign Born, Northern America (Bermuda & Canada, per ACS definition)
+                (3, "LATIN AMERICA"), # Foreign Born, Latin America (includes "Americas, Not Specified")
+                (6, "AFRICA"), # Foreign Born, Africa
+            ]
+            
+            # Default to NA, check for NATIVITY before applying additional harmonization
+            df[var] = pd.NA
+            has_nativity = "NATIVITY" in df.columns
+
+            for val, label in bins:
+                mask = s == val
+                if has_nativity:
+                    mask = mask & (df["NATIVITY"].astype(str) == "2")
+                df.loc[mask, var] = label
         
         elif var == "LANP":
 
             if PUMS_year > 2011:
+                
+                # All the languages ACS considers "other and unspecified"
+                other_unspecified = (s.between(1000, 1052) | s.between(1057, 1063) | s.between(1074, 1109) |
+                    s.between(1565, 1642) | s.between(3799, 9499) | s.between(9600, 9999))
 
                 conditions = [
                     s == 1200,
@@ -336,7 +423,7 @@ def _harmonize_variables(df, PUMS_year):
                     s == 4500,
                     s.between(1069, 1564),
                     s.between(1675, 3600),
-                    s.notna()
+                    other_unspecified
                 ]
 
                 choices = [
@@ -351,8 +438,7 @@ def _harmonize_variables(df, PUMS_year):
                     "Arabic",
                     "Other Indo-European",
                     "Other Asian and Pacific Island",
-                    "Other and Unspecified Languages"
-                    # Includes all languages not yet categorized, not just those typically in the census category with this name.
+                    "Other and Unspecified Languages" # Only refers to the census category, not "all languages not listed above"
                 ]
 
                 df[var] = np.select(conditions, choices, default=pd.NA)
@@ -370,9 +456,9 @@ def _harmonize_variables(df, PUMS_year):
                     s == 742,
                     s == 777,
                     s == 600,
-                    (s.between(601, 677) | (s == 985)),
-                    (s.between(691, 776) | s.isin([986, 988])),
-                    s.notna()
+                    (s.between(601, 678) | (s == 985)),
+                    (s.between(684, 695) | (s.between (698, 771)) | s.isin([986, 988])),
+                    (s.between(679, 683) | (s.between(696, 697)) | s.between(777, 999))
                 ]
 
                 choices = [
@@ -396,18 +482,27 @@ def _harmonize_variables(df, PUMS_year):
 
 
         elif var in ["OCPIP", "GRPIP"]: 
+            if var == "OCPIP" and "TEN" in df.columns:
+                s.loc[numeric_cache["TEN"] != 1] = 0
+            if var == "GRPIP" and "TEN" in df.columns:
+                s.loc[numeric_cache["TEN"] != 3] = 0
+            
+            out = pd.Series(pd.NA, index=df.index)
+
             # PUMS puts these in integer percentages 
             # Handle lowest levels differently, others the same. 
             if var == "GRPIP": 
-                df.loc[s.between(1, 14), var] = "<15.0%" 
-                df.loc[s.between(15, 19), var] = "15.0-19.9%" 
+                out.loc[s.between(1, 14)] = "<15.0%" 
+                out.loc[s.between(15, 19)] = "15.0-19.9%" 
             elif var == "OCPIP": 
-                df.loc[s.between(1, 19), var] = "<20.0%" 
+                out.loc[s.between(1, 19)] = "<20.0%" 
             
-            df.loc[s.between(20, 24), var] = "20.0-24.9%" 
-            df.loc[s.between(25, 29), var] = "25.0-29.9%" 
-            df.loc[s.between(30, 34), var] = "30.0-34.9%" 
-            df.loc[s >= 35, var] = "35% or more"
+            out.loc[s.between(20, 24)] = "20.0-24.9%" 
+            out.loc[s.between(25, 29)] = "25.0-29.9%" 
+            out.loc[s.between(30, 34)] = "30.0-34.9%" 
+            out.loc[s >= 35] = "35% or more"
+
+            df[var] = out
 
         elif var == "HISP":
             df[var] = np.select([s == 1, s.between(2, 24)], ["2", "1"], default=pd.NA)
@@ -425,7 +520,7 @@ def _harmonize_variables(df, PUMS_year):
                     9: "Two or More Races, not Hispanic or Latino"
                 }
 
-                race_hisp = pd.Series("Missing/Not Applicable", index=df.index)
+                race_hisp = pd.Series(pd.NA, index=df.index)
 
                 for code, label in race_map.items():
                     race_hisp[not_hispanic & (r == code)] = label
@@ -434,14 +529,14 @@ def _harmonize_variables(df, PUMS_year):
                 new_variables += ["RACE_HISP"]
 
         elif var == "HINCP":
-
-            # EARNINGS
-            df["EARNINGS"] = np.select([s > 0, s <= 0], ["Households with earnings", "Households with no/negative income"], default=pd.NA)
-            new_variables += ["EARNINGS"]
+            # Adjust for inflation
+            if "ADJINC" in df.columns:
+                s = df[var].astype(float) * numeric_cache["ADJINC"].astype(float)
+            else:
+                s = df[var].astype(float)
 
             conditions = [
-                s <= 0,
-                s.between(1, 9999),
+                s < 10000,
                 s.between(10000, 14999),
                 s.between(15000, 24999),
                 s.between(25000, 34999),
@@ -454,7 +549,6 @@ def _harmonize_variables(df, PUMS_year):
             ]
 
             choices = [
-                "No/Negative Income",
                 "< $10,000",
                 "$10,000-$14,999",
                 "$15,000-$24,999",
@@ -469,8 +563,18 @@ def _harmonize_variables(df, PUMS_year):
 
             df[var] = np.select(conditions, choices, default=pd.NA)
 
-        elif var in ["NAICSP", "NAICSP07"]: # Use NAICSP07 for 2011 data. Fortunately, this code works on either variable.
+        elif var in ["NAICSP", "NAICSP07"]: # Use NAICSP07 for 2011 data. Fortunately, prefixes are consistent across variables.
             col = df[var].astype(str)
+
+            # Universe restriction
+            if all(c in df.columns for c in ["AGEP", "ESR"]):
+                if PUMS_year > 2011:
+                    employed = numeric_cache["ESR"].between(1,2) # NAICSP counts civilian employed pop
+                    not_in_universe = (numeric_cache["AGEP"] < 16) | (~employed)
+                else:
+                    not_in_universe = numeric_cache["AGEP"] < 16 # NAICSP07 does not restrict wrt ESR.
+                df.loc[not_in_universe, var] = pd.NA
+                valid = ~not_in_universe
 
             mapping = [
                 (("11", "21"), "Agriculture, forestry, fishing and hunting, and mining"),
@@ -481,16 +585,18 @@ def _harmonize_variables(df, PUMS_year):
                 (("22", "48", "49"), "Transportation and warehousing, and utilities"),
                 (("51",), "Information"),
                 (("52", "53"), "Finance and insurance, and real estate and rental and leasing"),
-                (("54", "55", "56"), "Professional, scientific, and management, and admnistrative and waste management services"),
+                (("54", "55", "56"), "Professional, scientific, and management, and administrative and waste management services"),
                 (("61", "62"), "Educational services, and health care and social assistance"),
                 (("71", "72"), "Arts, entertainment, and recreation, and accommodation and food services"),
                 (("81",), "Other services, except public administration"),
                 (("921", "92M", "923", "9281P", "928P"), "Public Administration"),
-                (("92811",), "Military"),
+                (("92811", "N.A.////", "-1", "9920"), pd.NA),
             ]
 
             for prefixes, label in mapping:
                 mask = col.str.startswith(prefixes)
+                if all(col in df.columns for col in ["AGEP", "ESR"]):
+                    mask = mask & valid
                 df.loc[mask, var] = label
         # Doesn't include unemployed or n/a
 
@@ -499,19 +605,24 @@ def _harmonize_variables(df, PUMS_year):
             df["AGE_CAT"] = np.select([s < 18, s.between(18, 64), s >= 65], ["Under 18", "18 to 64", "65 and Over"], default=pd.NA)
             new_variables += ["AGE_CAT"]
 
-            df["AGE_U18"] = np.where(s < 18, "Under 18", "18 and Over")
+            df["AGE_U18"] = np.where(s < 18, pd.NA, "18 and Over") # Already have an under-18 indicator so set this to NA
             new_variables += ["AGE_U18"]
             
+            # Use AGEP to properly harmonize for "never married" (PUMS also puts those under 15 in this category)
+            if "MAR" in df.columns:
+                age = numeric_cache["AGEP"]
+                df.loc[(numeric_cache["MAR"] == 5) & (age < 15), "MAR"] = pd.NA
+
             # Use broader categories for disability crosstab
             if "DIS" in df.columns:
-                w_dis = df["DIS"].astype(str) == "1"
+                w_dis = df["DIS"].eq("1")
 
                 dis_map = {
                     "Under 18": "With a disability, under 18 years",
                     "18 to 64": "With a disability, 18-64 years",
                     "65 and Over": "With a disability, 65 years and over"
                 }
-                dis_age = pd.Series("N/A", index=df.index)
+                dis_age = pd.Series(pd.NA, index=df.index)
 
                 for code, label in dis_map.items():
                     dis_age[w_dis & (df["AGE_CAT"] == code)] = label
@@ -538,6 +649,10 @@ def _harmonize_variables(df, PUMS_year):
 
             for lo, hi, label in bins:
                 df.loc[s.between(lo, hi), var] = label
+        
+        elif var in ["ADJINC", "TYPEHUGQ", "TYPE"]:
+            # These were just for harmonization, no need to aggregate estimates.
+            df[var] = pd.NA
 
     return df, new_variables
 #
@@ -574,8 +689,16 @@ def _person_to_household(person_df, PUMS_year, hh_vars, census_api_key):
     
     person_df["HH_ID"] = person_df[f"puma{census_year}"].astype(str) + "_" + person_df["SERIALNO"].astype(str)
 
-    # Aggregate person vars → household vars
-    hh_agg = {var: lambda s: (s == "1").any() for var in hh_vars}
+    # Aggregate person vars → household vars (special case for PERNP)
+    hh_agg = {}
+
+    for var in hh_vars:
+        if var == "PERNP":
+            # Household has earnings if any person has PERNP > 0
+            hh_agg[var] = lambda s: (pd.to_numeric(s, errors="coerce") > 0).any()
+        else:
+            # Default binary aggregation
+            hh_agg[var] = lambda s: (s == "1").any()
     
     for col in passthrough_cols:
         hh_agg[col] = "first"
@@ -583,9 +706,22 @@ def _person_to_household(person_df, PUMS_year, hh_vars, census_api_key):
     hh_vars_df = (person_df
         .groupby("HH_ID", as_index=False)
         .agg(hh_agg)
-        .astype({v: "int64" for v in hh_vars})
-        .rename(columns={v: f"{v}_hh" for v in hh_vars})
-        )
+    )
+
+    if "PERNP" in hh_vars_df.columns:
+        hh_vars_df["PERNP"] = np.where(hh_vars_df["PERNP"], 1, pd.NA)
+
+    # Convert other hh_vars to nullable integer flags
+    for v in hh_vars:
+        if v != "PERNP":
+            hh_vars_df[v] = np.where(hh_vars_df[v], 1, pd.NA)
+
+    hh_vars_df = hh_vars_df.astype({v: "Int64" for v in hh_vars})
+
+    # Rename HH variables
+    rename_map = {v: f"{v}_hh" for v in hh_vars}
+
+    hh_vars_df = hh_vars_df.rename(columns=rename_map)
 
     # Pull household weights
     pumas = PUMAS_20 if census_year == 2020 else PUMAS_10
@@ -623,10 +759,10 @@ def _person_to_household(person_df, PUMS_year, hh_vars, census_api_key):
     return hh_df
 #
 
-# New constant: demo_dict supplement for variables created in harmonization
-SUPPLEMENTAL_DICT = {"COMPUTER": "household", "EARNINGS": "household", "RACE_HISP": "person", "AGE_CAT": "person", 
+# demo_dict supplement for variables created in harmonization
+SUPPLEMENTAL_DICT = {"COMPUTER": "household", "BBAND": "household", "RACE_HISP": "person", "AGE_CAT": "person", 
     "AGE_U18": "person", "DIS_AGE": "person", "LBR_FRC": "person", "RETP_hh": "household", "SSP_hh": "household", 
-    "SSIP_hh": "household", "PAP_hh": "household"}
+    "SSIP_hh": "household", "PAP_hh": "household", "PERNP_hh": "household"}
 
 def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, level):
     """
@@ -659,8 +795,14 @@ def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, le
 
     if universe == "person":
         weight_var = "PWGTP"
+        # Add a new variable to determine civilian noninstitutionalized population for person-level harmonization later
+        type_col = "TYPEHUGQ" if PUMS_year > 2020 else "TYPE"
+        var_code_list.append(type_col)
+
     elif universe == "household":
         weight_var = "WGTP"
+        # Add a new variable to adjust household income for inflation later
+        var_code_list.append("ADJINC")
     else:
         raise ValueError("Universe must be 'person' or 'household'")
 
@@ -723,8 +865,9 @@ def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, le
         long_df = long_df.drop_duplicates(subset="HH_ID")
 
     # Aggregate variables from person to household level if needed
-    p_to_hh = ["RETP", "SSP", "SSIP", "PAP"]
+    p_to_hh = ["PERNP", "RETP", "SSP", "SSIP", "PAP"]
     requested_p_to_hh = [v for v in var_code_list if v in p_to_hh]
+    pums_vars_for_agg = [v for v in var_code_list if v not in requested_p_to_hh]
     hh_df = None
 
     if requested_p_to_hh:
@@ -787,7 +930,7 @@ def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, le
     out_df = final_df.copy()
 
     if universe == "person" or not requested_p_to_hh:
-        out_df = _aggregate_universe(long_df, var_code_list, weight_var, out_df)
+        out_df = _aggregate_universe(long_df, pums_vars_for_agg, weight_var, out_df)
 
     if requested_p_to_hh:
         out_df = _aggregate_universe(hh_df,[f"{v}_hh" for v in requested_p_to_hh], "WGTP", out_df)
@@ -1452,6 +1595,59 @@ def _estimates_by_geography(PUMS_year, demo_dict, geo, pop_est_df, variance_df, 
     return geo_df.reset_index()
 #
 
+def _calc_ratio(raw_geo_df, numerator, denominator, name):
+    """
+    Calculate percent estimate, percent MOE, and CV for a ratio.
+    Created for unemployment rate, but could extend to % of pop under 200% FPL, etc.
+    
+    Parameters:
+    raw_geo_df (pd.DataFrame): A dataframe containing the estimates from which a ratio will be calculated.
+    numerator (str): Column name of numerator estimate (e.g. 'ESR3_E')
+    denominator (str): Column name of denominator estimate (e.g. 'LBR_FRC1_E')
+    name (str): Output base name (e.g. 'UNEMP')
+
+    Returns:
+    DataFrame with new columns added: {name}_PE, {name}_PM, {name}_V
+    """
+    num_M = numerator[:-1] + "M"
+    den_M = denominator[:-1] + "M"
+
+    if not {numerator, denominator, num_M, den_M}.issubset(raw_geo_df.columns):
+        return raw_geo_df
+
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # proportion
+        den = raw_geo_df[denominator].replace({0: np.nan})
+        
+        p = raw_geo_df[numerator] / den
+
+        raw_geo_df[f"{name}_PE"] = (100 * p).round(2)
+
+        # MOE (ACS ratio formula)
+        under_sqrt = raw_geo_df[num_M]**2 - (p**2) * raw_geo_df[den_M]**2
+        cond = (under_sqrt >= 0).fillna(False)
+
+        moe_prop = np.sqrt(
+            np.where(
+                cond,
+                under_sqrt,
+                raw_geo_df[num_M]**2 + (p**2) * raw_geo_df[den_M]**2
+            )
+        ) / den
+
+        raw_geo_df[f"{name}_PM"] = (100 * moe_prop).round(2)
+
+        # coefficient of variation
+        raw_geo_df[f"{name}_V"] = (
+            raw_geo_df[f"{name}_PM"] /
+            (1.645 * raw_geo_df[f"{name}_PE"])
+        ).round(3)
+
+    raw_geo_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+
+    return raw_geo_df
+
+
 ######## VIEW AVAILABLE INPUTS  
 
 def available_years():
@@ -1826,125 +2022,129 @@ def generate_new_estimates(PUMS_year, demo_dict, geo, census_api_key, total_pop_
                 raw_geo_df[f"{base}_PE"] = (100 * (raw_geo_df[est_col] / raw_geo_df[denom_col])).round(2)
     raw_geo_df.replace([np.inf, -np.inf], np.nan, inplace=True)
 
+    # Calculate ratios, e.g. unemployment rate
+    raw_geo_df = _calc_ratio(raw_geo_df, "ESR3_E", "LBR_FRC1_E", "UNEMP")
+
     # cleaning
     cleaned_geo_df = _clean_columns(raw_geo_df, geo)
     
     return cleaned_geo_df
 #
 
-dict20 = {"SEX": "person", "HISP": "person", "RAC1P": "person", "MAR": "person", "DECADE": "person", "MIG": "person", 
-    "SCHG": "person", "SCHL": "person", "ESR": "person", "JWTRNS": "person", "JWRIP": "person", "HICOV": "person", 
-    "PRIVCOV": "person", "PUBCOV": "person",  "R18": "household", "R65": "household", "VEH": "household", "TEL": "household", 
-    "HFL": "household", "CIT": "person", "NATIVITY": "person", "POBP": "person", "ENG": "person", "LANP": "person", 
-    "MIL": "person", "TEN": "household", "HISPEED": "household", "COMPOTHX": "household", "TABLET": "household", 
-    "NAICSP": "person", "DIS": "person", "HINCP": "household", "RETP": "person", "SSP": "person", "SSIP": "person", 
-    "PAP": "person", "FS": "household", "AGEP": "person", "POVPIP": "person", "NP": "household", "OCPIP": "household", 
-    "GRPIP": "household"}
+dict20 = {"SEX": "person", "HISP": "person", "RAC1P": "person", "MAR": "person", "DECADE": "person", "MIG": "person", "SCHG": "person", 
+    "SCHL": "person", "ESR": "person", "JWTRNS": "person", "JWRIP": "person", "TYPEHUGQ": "household", "HICOV": "person", 
+    "PRIVCOV": "person", "PUBCOV": "person",  "R18": "household", "R65": "household", "VEH": "household", "TEL": "household",
+    "HFL": "household", "CIT": "person", "NATIVITY": "person", "POBP": "person", "WAOB": "person", "ENG": "person", "LANX": "person", 
+    "LANP": "person", "MIL": "person", "TEN": "household", "BROADBND": "household", "HISPEED": "household", "COMPOTHX": "household", 
+    "TABLET": "household", "SMARTPHONE": "household", "NAICSP": "person", "DIS": "person", "HINCP": "household", "PERNP": "person", 
+    "RETP": "person", "SSP": "person", "SSIP": "person", "PAP": "person", "FS": "household", "AGEP": "person", "POVPIP": "person", 
+    "NP": "household", "OCPIP": "household", "GRPIP": "household"}
 
 dict16 = {"SEX": "person", "HISP": "person", "RAC1P": "person", "MAR": "person", "DECADE": "person", "MIG": "person", 
-    "SCHG": "person", "SCHL": "person", "ESR": "person", "JWTR": "person", "JWRIP": "person", "HICOV": "person", 
-    "PRIVCOV": "person", "PUBCOV": "person",  "R18": "household", "R65": "household", "VEH": "household", "TEL": "household", 
-    "HFL": "household", "CIT": "person", "NATIVITY": "person", "POBP": "person", "ENG": "person", "LANP": "person", 
-    "MIL": "person", "TEN": "household", "NAICSP": "person", "DIS": "person", "HINCP": "household", "RETP": "person", 
-    "SSP": "person", "SSIP": "person", "PAP": "person", "FS": "household", "AGEP": "person", "POVPIP": "person", 
-    "NP": "household", "OCPIP": "household", "GRPIP": "household"}
+    "SCHG": "person", "SCHL": "person", "ESR": "person", "JWTR": "person", "JWRIP": "person", "TYPE": "household", 
+    "HICOV": "person", "PRIVCOV": "person", "PUBCOV": "person",  "R18": "household", "R65": "household", "VEH": "household", 
+    "TEL": "household", "HFL": "household", "CIT": "person", "NATIVITY": "person", "POBP": "person", "WAOB": "person", 
+    "ENG": "person", "LANX": "person", "LANP": "person", "MIL": "person", "TEN": "household", "NAICSP": "person", "DIS": "person", 
+    "HINCP": "household", "PERNP": "person", "RETP": "person", "SSP": "person", "SSIP": "person", "PAP": "person", "FS": 
+    "household", "AGEP": "person", "POVPIP": "person", "NP": "household", "OCPIP": "household", "GRPIP": "household"}
 
 dict11 = {"SEX": "person", "HISP": "person", "RAC1P": "person", "MAR": "person", "DECADE": "person", "MIG": "person", 
     "SCHG": "person", "SCHL": "person", "ESR": "person", "JWTR": "person", "JWRIP": "person", "R18": "household", 
     "R65": "household", "VEH": "household", "TEL": "household", "HFL": "household", "CIT": "person", "NATIVITY": "person", 
-    "POBP": "person", "ENG": "person", "LANP": "person", "MIL": "person", "TEN": "household", "NAICSP07": "person", 
-    "HINCP": "household", "RETP": "person", "SSP": "person", "SSIP": "person", "PAP": "person", "FS": "household", 
-    "AGEP": "person", "POVPIP": "person", "NP": "household", "OCPIP": "household", "GRPIP": "household"}
+    "POBP": "person", "WAOB": "person", "ENG": "person", "LANX": "person", "LANP": "person", "MIL": "person", "TEN": "household", 
+    "NAICSP07": "person", "HINCP": "household", "PERNP": "person", "RETP": "person", "SSP": "person", "SSIP": "person", 
+    "PAP": "person", "FS": "household", "AGEP": "person", "POVPIP": "person", "NP": "household", "OCPIP": "household", 
+    "GRPIP": "household"}
 
 # nyc_wide_estimates_puma_2023 = generate_new_estimates(2023, dict20, "city", API_KEY, "total_pop_E", "total_households_E")
-# nyc_wide_estimates_puma_2023.to_csv("nyc_wide_estimates_puma_2023.csv", index = FALSE)
+# nyc_wide_estimates_puma_2023.to_csv("nyc_wide_estimates_puma_2023.csv", index = False)
 # nyc_wide_estimates_puma_2021 = generate_new_estimates(2021, dict20, "city", API_KEY, "total_pop_E", "total_households_E")
-# nyc_wide_estimates_puma_2021.to_csv("nyc_wide_estimates_puma_2021.csv", index = FALSE)
+# nyc_wide_estimates_puma_2021.to_csv("nyc_wide_estimates_puma_2021.csv", index = False)
 # nyc_wide_estimates_puma_2016 = generate_new_estimates(2016, dict16, "city", API_KEY, "total_pop_E", "total_households_E")
-# nyc_wide_estimates_puma_2016.to_csv("nyc_wide_estimates_puma_2016.csv", index = FALSE)
+# nyc_wide_estimates_puma_2016.to_csv("nyc_wide_estimates_puma_2016.csv", index = False)
 # nyc_wide_estimates_puma_2011 = generate_new_estimates(2011, dict11, "city", API_KEY, "total_pop_E", "total_households_E")
-# nyc_wide_estimates_puma_2011.to_csv("nyc_wide_estimates_puma_2011.csv", index = FALSE)
+# nyc_wide_estimates_puma_2011.to_csv("nyc_wide_estimates_puma_2011.csv", index = False)
 
 # borough_geographies_puma_2023 = generate_new_estimates(2023, dict20, "borough", API_KEY, "total_pop_E", "total_households_E")
-# borough_geographies_puma_2023.to_csv("borough-geographies_puma_2023.csv", index = FALSE)
+# borough_geographies_puma_2023.to_csv("borough-geographies_puma_2023.csv", index = False)
 # borough_geographies_puma_2021 = generate_new_estimates(2021, dict20, "borough", API_KEY, "total_pop_E", "total_households_E")
-# borough_geographies_puma_2021.to_csv("borough-geographies_puma_2021.csv", index = FALSE)
+# borough_geographies_puma_2021.to_csv("borough-geographies_puma_2021.csv", index = False)
 # borough_geographies_puma_2016 = generate_new_estimates(2016, dict16, "borough", API_KEY, "total_pop_E", "total_households_E")
-# borough_geographies_puma_2016.to_csv("borough-geographies_puma_2016.csv", index = FALSE)
+# borough_geographies_puma_2016.to_csv("borough-geographies_puma_2016.csv", index = False)
 # borough_geographies_puma_2011 = generate_new_estimates(2011, dict11, "borough", API_KEY, "total_pop_E", "total_households_E")
-# borough_geographies_puma_2011.to_csv("borough-geographies_puma_2011.csv", index = FALSE)
+# borough_geographies_puma_2011.to_csv("borough-geographies_puma_2011.csv", index = False)
 
 # puma_geographies_puma_2023 = generate_new_estimates(2023, dict20, "puma", API_KEY, "total_pop_E", "total_households_E")
-# puma_geographies_puma_2023.to_csv("puma-geographies_puma_2023.csv", index = FALSE)
+# puma_geographies_puma_2023.to_csv("puma-geographies_puma_2023.csv", index = False)
 # puma_geographies_puma_2021 = generate_new_estimates(2021, dict20, "puma", API_KEY, "total_pop_E", "total_households_E")
-# puma_geographies_puma_2021.to_csv("puma-geographies_puma_2021.csv", index = FALSE)
+# puma_geographies_puma_2021.to_csv("puma-geographies_puma_2021.csv", index = False)
 # puma_geographies_puma_2016 = generate_new_estimates(2016, dict16, "puma", API_KEY, "total_pop_E", "total_households_E")
-# puma_geographies_puma_2016.to_csv("puma-geographies_puma_2016.csv", index = FALSE)
+# puma_geographies_puma_2016.to_csv("puma-geographies_puma_2016.csv", index = False)
 # puma_geographies_puma_2011 = generate_new_estimates(2011, dict11, "puma", API_KEY, "total_pop_E", "total_households_E")
-# puma_geographies_puma_2011.to_csv("puma-geographies_puma_2011.csv", index = FALSE)
+# puma_geographies_puma_2011.to_csv("puma-geographies_puma_2011.csv", index = False)
 
 # communitydist_geographies_puma_2023 = generate_new_estimates(2023, dict20, "communitydist", API_KEY, "total_pop_E", "total_households_E")
-# communitydist_geographies_puma_2023.to_csv("communitydist-geographies_puma_2023.csv", index = FALSE)
+# communitydist_geographies_puma_2023.to_csv("communitydist-geographies_puma_2023.csv", index = False)
 # communitydist_geographies_puma_2021 = generate_new_estimates(2021, dict20, "communitydist", API_KEY, "total_pop_E", "total_households_E")
-# communitydist_geographies_puma_2021.to_csv("communitydist-geographies_puma_2021.csv", index = FALSE)
+# communitydist_geographies_puma_2021.to_csv("communitydist-geographies_puma_2021.csv", index = False)
 # communitydist_geographies_puma_2016 = generate_new_estimates(2016, dict16, "communitydist", API_KEY, "total_pop_E", "total_households_E")
-# communitydist_geographies_puma_2016.to_csv("communitydist-geographies_puma_2016.csv", index = FALSE)
+# communitydist_geographies_puma_2016.to_csv("communitydist-geographies_puma_2016.csv", index = False)
 # communitydist_geographies_puma_2011 = generate_new_estimates(2011, dict11, "communitydist", API_KEY, "total_pop_E", "total_households_E")
-# communitydist_geographies_puma_2011.to_csv("communitydist-geographies_puma_2011.csv", index = FALSE)
+# communitydist_geographies_puma_2011.to_csv("communitydist-geographies_puma_2011.csv", index = False)
 
 # councildist_2023_geographies_puma_2023 = generate_new_estimates(2023, dict20, "councildist", API_KEY, "total_pop_E", "total_households_E", 2023)
-# councildist_2023_geographies_puma_2023.to_csv("councildist_2023-geographies_puma_2023.csv", index = FALSE)
+# councildist_2023_geographies_puma_2023.to_csv("councildist_2023-geographies_puma_2023.csv", index = False)
 # councildist_2023_geographies_puma_2021 = generate_new_estimates(2021, dict20, "councildist", API_KEY, "total_pop_E", "total_households_E", 2023)
-# councildist_2023_geographies_puma_2021.to_csv("councildist_2023-geographies_puma_2021.csv", index = FALSE)
+# councildist_2023_geographies_puma_2021.to_csv("councildist_2023-geographies_puma_2021.csv", index = False)
 # councildist_2023_geographies_puma_2016 = generate_new_estimates(2016, dict16, "councildist", API_KEY, "total_pop_E", "total_households_E", 2023)
-# councildist_2023_geographies_puma_2016.to_csv("councildist_2023-geographies_puma_2016.csv", index = FALSE)
+# councildist_2023_geographies_puma_2016.to_csv("councildist_2023-geographies_puma_2016.csv", index = False)
 # councildist_2023_geographies_puma_2011 = generate_new_estimates(2011, dict11, "councildist", API_KEY, "total_pop_E", "total_households_E", 2023)
-# councildist_2023_geographies_puma_2011.to_csv("councildist_2023-geographies_puma_2011.csv", index = FALSE)
+# councildist_2023_geographies_puma_2011.to_csv("councildist_2023-geographies_puma_2011.csv", index = False)
 
 # councildist_2013_geographies_puma_2023 = generate_new_estimates(2023, dict20, "councildist", API_KEY, "total_pop_E", "total_households_E", 2013)
-# councildist_2013_geographies_puma_2023.to_csv("councildist_2013-geographies_puma_2023.csv", index = FALSE)
+# councildist_2013_geographies_puma_2023.to_csv("councildist_2013-geographies_puma_2023.csv", index = False)
 # councildist_2013_geographies_puma_2021 = generate_new_estimates(2021, dict20, "councildist", API_KEY, "total_pop_E", "total_households_E", 2013)
-# councildist_2013_geographies_puma_2021.to_csv("councildist_2013-geographies_puma_2021.csv", index = FALSE)
+# councildist_2013_geographies_puma_2021.to_csv("councildist_2013-geographies_puma_2021.csv", index = False)
 # councildist_2013_geographies_puma_2016 = generate_new_estimates(2016, dict16, "councildist", API_KEY, "total_pop_E", "total_households_E", 2013)
-# councildist_2013_geographies_puma_2016.to_csv("councildist_2013-geographies_puma_2016.csv", index = FALSE)
+# councildist_2013_geographies_puma_2016.to_csv("councildist_2013-geographies_puma_2016.csv", index = False)
 # councildist_2013_geographies_puma_2011 = generate_new_estimates(2011, dict11, "councildist", API_KEY, "total_pop_E", "total_households_E", 2013)
-# councildist_2013_geographies_puma_2011.to_csv("councildist_2013-geographies_puma_2011.csv", index = FALSE)
+# councildist_2013_geographies_puma_2011.to_csv("councildist_2013-geographies_puma_2011.csv", index = False)
 
 # modzcta_geographies_puma_2023 = generate_new_estimates(2023, dict20, "modzcta", API_KEY, "total_pop_E", "total_households_E")
-# modzcta_geographies_puma_2023.to_csv("modzcta-geographies_puma_2023.csv", index = FALSE)
+# modzcta_geographies_puma_2023.to_csv("modzcta-geographies_puma_2023.csv", index = False)
 # modzcta_geographies_puma_2021 = generate_new_estimates(2021, dict20, "modzcta", API_KEY, "total_pop_E", "total_households_E")
-# modzcta_geographies_puma_2021.to_csv("modzcta-geographies_puma_2021.csv", index = FALSE)
+# modzcta_geographies_puma_2021.to_csv("modzcta-geographies_puma_2021.csv", index = False)
 # modzcta_geographies_puma_2016 = generate_new_estimates(2016, dict16, "modzcta", API_KEY, "total_pop_E", "total_households_E")
-# modzcta_geographies_puma_2016.to_csv("modzcta-geographies_puma_2016.csv", index = FALSE)
+# modzcta_geographies_puma_2016.to_csv("modzcta-geographies_puma_2016.csv", index = False)
 # modzcta_geographies_puma_2011 = generate_new_estimates(2011, dict11, "modzcta", API_KEY, "total_pop_E", "total_households_E")
-# modzcta_geographies_puma_2011.to_csv("modzcta-geographies_puma_2011.csv", index = FALSE)
+# modzcta_geographies_puma_2011.to_csv("modzcta-geographies_puma_2011.csv", index = False)
 
 # nta_geographies_puma_2023 = generate_new_estimates(2023, dict20, "nta", API_KEY, "total_pop_E", "total_households_E")
-# nta_geographies_puma_2023.to_csv("nta-geographies_puma_2023.csv", index = FALSE)
+# nta_geographies_puma_2023.to_csv("nta-geographies_puma_2023.csv", index = False)
 # nta_geographies_puma_2021 = generate_new_estimates(2021, dict20, "nta", API_KEY, "total_pop_E", "total_households_E")
-# nta_geographies_puma_2021.to_csv("nta-geographies_puma_2021.csv", index = FALSE)
+# nta_geographies_puma_2021.to_csv("nta-geographies_puma_2021.csv", index = False)
 # nta_geographies_puma_2016 = generate_new_estimates(2016, dict16, "nta", API_KEY, "total_pop_E", "total_households_E")
-# nta_geographies_puma_2016.to_csv("nta-geographies_puma_2016.csv", index = FALSE)
+# nta_geographies_puma_2016.to_csv("nta-geographies_puma_2016.csv", index = False)
 # nta_geographies_puma_2011 = generate_new_estimates(2011, dict11, "nta", API_KEY, "total_pop_E", "total_households_E")
-# nta_geographies_puma_2011.to_csv("nta-geographies_puma_2011.csv", index = FALSE)
+# nta_geographies_puma_2011.to_csv("nta-geographies_puma_2011.csv", index = False)
 
 # policeprct_geographies_puma_2023 = generate_new_estimates(2023, dict20, "policeprct", API_KEY, "total_pop_E", "total_households_E")
-# policeprct_geographies_puma_2023.to_csv("policeprct-geographies_puma_2023.csv", index = FALSE)
+# policeprct_geographies_puma_2023.to_csv("policeprct-geographies_puma_2023.csv", index = False)
 # policeprct_geographies_puma_2021 = generate_new_estimates(2021, dict20, "policeprct", API_KEY, "total_pop_E", "total_households_E")
-# policeprct_geographies_puma_2021.to_csv("policeprct-geographies_puma_2021.csv", index = FALSE)
+# policeprct_geographies_puma_2021.to_csv("policeprct-geographies_puma_2021.csv", index = False)
 # policeprct_geographies_puma_2016 = generate_new_estimates(2016, dict16, "policeprct", API_KEY, "total_pop_E", "total_households_E")
-# policeprct_geographies_puma_2016.to_csv("policeprct-geographies_puma_2016.csv", index = FALSE)
+# policeprct_geographies_puma_2016.to_csv("policeprct-geographies_puma_2016.csv", index = False)
 # policeprct_geographies_puma_2011 = generate_new_estimates(2011, dict11, "policeprct", API_KEY, "total_pop_E", "total_households_E")
-# policeprct_geographies_puma_2011.to_csv("policeprct-geographies_puma_2011.csv", index = FALSE)
+# policeprct_geographies_puma_2011.to_csv("policeprct-geographies_puma_2011.csv", index = False)
 
 # schooldist_geographies_puma_2023 = generate_new_estimates(2023, dict20, "schooldist", API_KEY, "total_pop_E", "total_households_E")
-# schooldist_geographies_puma_2023.to_csv("schooldist-geographies_puma_2023.csv", index = FALSE)
+# schooldist_geographies_puma_2023.to_csv("schooldist-geographies_puma_2023.csv", index = False)
 # schooldist_geographies_puma_2021 = generate_new_estimates(2021, dict20, "schooldist", API_KEY, "total_pop_E", "total_households_E")
-# schooldist_geographies_puma_2021.to_csv("schooldist-geographies_puma_2021.csv", index = FALSE)
+# schooldist_geographies_puma_2021.to_csv("schooldist-geographies_puma_2021.csv", index = False)
 # schooldist_geographies_puma_2016 = generate_new_estimates(2016, dict16, "schooldist", API_KEY, "total_pop_E", "total_households_E")
-# schooldist_geographies_puma_2016.to_csv("schooldist-geographies_puma_2016.csv", index = FALSE)
+# schooldist_geographies_puma_2016.to_csv("schooldist-geographies_puma_2016.csv", index = False)
 # schooldist_geographies_puma_2011 = generate_new_estimates(2011, dict11, "schooldist", API_KEY, "total_pop_E", "total_households_E")
-# schooldist_geographies_puma_2011.to_csv("schooldist-geographies_puma_2011.csv", index = FALSE)
+# schooldist_geographies_puma_2011.to_csv("schooldist-geographies_puma_2011.csv", index = False)
 
 def get_councilcount_estimates(PUMS_year, geo, var_codes="all", boundary_year=None):
     """
