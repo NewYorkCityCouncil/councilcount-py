@@ -198,7 +198,7 @@ def _harmonize_variables(df, PUMS_year):
     
     # Civilian Noninstitutionalized Population
     civ_ninst = None
-    type_col = "TYPEHUGQ" if PUMS_year > 2020 else "TYPE"
+    type_col = "TYPEHUGQ" if PUMS_year >= 2020 else "TYPE"
 
     if type_col in df.columns and "ESR" in df.columns:
         civ_ninst = (df[type_col].astype(str) != "2") & (numeric_cache["ESR"] != 4)
@@ -796,7 +796,7 @@ def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, le
     if universe == "person":
         weight_var = "PWGTP"
         # Add a new variable to determine civilian noninstitutionalized population for person-level harmonization later
-        type_col = "TYPEHUGQ" if PUMS_year > 2020 else "TYPE"
+        type_col = "TYPEHUGQ" if PUMS_year >= 2020 else "TYPE"
         var_code_list.append(type_col)
 
     elif universe == "household":
@@ -812,6 +812,9 @@ def _pull_single_universe(PUMS_year, var_code_list, census_api_key, universe, le
 
     # Collect baseline geo info
     long_df = _get_geo_info_cached(PUMS_year, "puma")
+    # Might be a recent update to the Census API, but we don't want leading zeroes for 2010 PUMAS anymore.
+    if census_year == 2010:
+        long_df["puma2010"] = long_df["puma2010"].astype(str).str.lstrip("0")
 
     # Build weight URLs
     pumas = PUMAS_20 if census_year == 2020 else PUMAS_10
@@ -1521,6 +1524,8 @@ def _estimates_by_geography(PUMS_year, demo_dict, geo, pop_est_df, variance_df, 
     geo_key = f'{geo}{boundary_ext}'
     # setting path
     file_path = f'{DATA_PATH}/{geo_key}-boundaries.geojson'
+    if geo in ["assembly district", "congressional district"]:
+        file_path = f'{DATA_PATH}/{geo_key}-nyc-wide.geojson'
     
     # load GeoJSON file for geographic boundaries
     with open(file_path) as f:
@@ -1883,7 +1888,7 @@ def generate_new_estimates(PUMS_year, demo_dict, geo, census_api_key, total_pop_
     census_year = _pums_to_census(PUMS_year)
     
     # locate available CSV files
-    file_names = os.listdir(DATA_PATH)
+    file_names = (os.listdir(f"{DATA_PATH}/PUMS Geographies") + os.listdir(DATA_PATH))
     
     # record available geos
     geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
@@ -1924,7 +1929,7 @@ def generate_new_estimates(PUMS_year, demo_dict, geo, census_api_key, total_pop_
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
 
     # selections for which estimates must be created using the Data Team's methodology    
-    if (geo in ['councildist','schooldist','policeprct','communitydist', 'nta', 'modzcta']):        
+    if (geo in ['councildist','schooldist','policeprct','communitydist', 'nta', 'modzcta', 'assembly district', 'congressional district']):        
         
         # generating blank BBL-level population estimates df
         blank_pop_est_df = (pd.read_csv(f'{DATA_PATH}/puma-bbl-population-estimates_{PUMS_year}.csv', 
@@ -1991,7 +1996,7 @@ def generate_new_estimates(PUMS_year, demo_dict, geo, census_api_key, total_pop_
             raw_geo_df = pd.concat([raw_geo_df, pd.DataFrame(cv_columns)], axis=1)
 
     # Ensure denominator columns exist for Data Team methodology geos
-    if geo in ['councildist','schooldist','policeprct','communitydist', 'nta', 'modzcta']:
+    if geo in ['councildist','schooldist','policeprct','communitydist', 'nta', 'modzcta', 'assembly district', 'congressional district']:
         
         # If total_pop_code expected but missing, construct it
         if total_pop_code and total_pop_code not in raw_geo_df.columns:
@@ -2055,6 +2060,16 @@ dict11 = {"SEX": "person", "HISP": "person", "RAC1P": "person", "MAR": "person",
     "NAICSP07": "person", "HINCP": "household", "PERNP": "person", "RETP": "person", "SSP": "person", "SSIP": "person", 
     "PAP": "person", "FS": "household", "AGEP": "person", "POVPIP": "person", "NP": "household", "OCPIP": "household", 
     "GRPIP": "household"}
+
+
+gt_dict = {"R18": "household", "R65": "household", "TEN": "household", "SEX": "person", 
+    "AGEP": "person", "RAC1P": "person", "HISP": "person", "NP": "household"}
+
+assembly_ests = generate_new_estimates(2020, gt_dict, "assembly district", API_KEY, "total_pop_E", "total_households_E")
+assembly_ests.to_csv("assembly district-geographies_puma_2020.csv", index = False)
+
+congress_ests = generate_new_estimates(2020, gt_dict, "congressional district", API_KEY, "total_pop_E", "total_households_E")
+congress_ests.to_csv("congressional district-geographies_puma_2020.csv", index = False)
 
 # nyc_wide_estimates_puma_2023 = generate_new_estimates(2023, dict20, "city", API_KEY, "total_pop_E", "total_households_E")
 # nyc_wide_estimates_puma_2023.to_csv("nyc_wide_estimates_puma_2023.csv", index = False)
@@ -2185,7 +2200,7 @@ def get_councilcount_estimates(PUMS_year, geo, var_codes="all", boundary_year=No
     if PUMS_year: PUMS_year = int(PUMS_year) 
     if boundary_year: boundary_year = int(boundary_year)
 
-    if PUMS_year > 2020:
+    if PUMS_year >= 2020:
         demo_dict = dict20
     elif PUMS_year == 2016:
         demo_dict = dict16

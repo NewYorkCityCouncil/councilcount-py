@@ -7,6 +7,8 @@ from shapely.geometry import shape
 import requests
 from warnings import warn
 
+DATA_PATH = "/Users/LLopez-Jensen/Documents/GitHub/councilcount-py/src/councilcount/data"
+
 # unique url segments for each available 5-Year ACS survey
 surveys = {'1' : '',
            '2' : '/profile',
@@ -59,8 +61,6 @@ def _pull_raw_census_data(survey_key, acs_year, census_year, var_code_list, leve
     variables = ",".join(var_code_list)  # concatenate variables into a comma-separated string
     state = "36" # code for New York state
     
-    # setting path for pulling data from internal folder
-    data_path = files("councilcount").joinpath("data") 
 
     # setting values based on geography level chosen
     if level == 'city': 
@@ -71,11 +71,11 @@ def _pull_raw_census_data(survey_key, acs_year, census_year, var_code_list, leve
         conversion_dict = {'5': 'The Bronx', '47': 'Brooklyn', '61': 'Manhattan', '81': 'Queens', '85': 'Staten Island'} 
     elif level == 'modzcta':
         # defining NYC ZCTAs to pull data for
-        nyc_zctas = pd.read_csv(f'{data_path}/nyc-zcta-list.csv')
+        nyc_zctas = pd.read_csv(f'{DATA_PATH}/nyc-zcta-list.csv')
         nyc_zctas_str = str(nyc_zctas['ZCTA5CE20'].to_list()).replace(' ', '').replace('[', '').replace(']', '')
         for_code =f"zip code tabulation area:{nyc_zctas_str}" # all NYC ZCTAs
         # converts zcta to modzcta
-        file_path = f'{data_path}/modzcta-boundaries.geojson'
+        file_path = f'{DATA_PATH}/modzcta-boundaries.geojson'
         with open(file_path) as f: df = geojson.load(f)
         features = df["features"]
         zcta_to_modzcta_df = pd.json_normalize([feature["properties"] for feature in features])
@@ -86,10 +86,10 @@ def _pull_raw_census_data(survey_key, acs_year, census_year, var_code_list, leve
         for_code = f'tract:*&in=county:005,047,061,081,085&in=state:{state}' # all NYC census tracts
         if level == 'nta':
             # to help build NTAs out of census tracts
-            nta_conversion = pd.read_csv(f'{data_path}/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
+            nta_conversion = pd.read_csv(f'{DATA_PATH}/2020_Census_Tracts_to_2020_NTAs_and_CDTAs_Equivalency_20240905.csv')
             conversion_dict = pd.Series(nta_conversion['NTACode'].values,index=nta_conversion['GEOID'].astype(str)).to_dict() 
             # need to pull in df with both names and codes to create column with NTA full names 
-            file_path = f'{data_path}/nta-boundaries.geojson'
+            file_path = f'{DATA_PATH}/nta-boundaries.geojson'
             with open(file_path) as f: df = geojson.load(f)
             features = df["features"]
             nta_name_df = pd.json_normalize([feature["properties"] for feature in features])
@@ -296,9 +296,9 @@ def _generate_bbl_estimates(survey_key, acs_year, demo_dict, pop_est_df, census_
         raise ValueError(f"{acs_year} is not a supported input. Please choose from years 2010 or later.")
         
     # adding unique identifier column: '{census_year}_tract_id' for pop_est_df
-    county_fips = {'BX':'5', 'BK':'47', 'MN':'61', 'QN':'81', 'SI':'85'}    
-    pop_est_df['county_fip'] = pop_est_df['borough'].map(county_fips)
-    pop_est_df[f'{census_year}_tract_id'] = pop_est_df[f'ct{census_year}'].astype(str) + '-' + pop_est_df['county_fip']
+    # county_fips = {'BX':'5', 'BK':'47', 'MN':'61', 'QN':'81', 'SI':'85'}    
+    # pop_est_df['county_fip'] = pop_est_df['borough'].map(county_fips)
+    # pop_est_df[f'{census_year}_tract_id'] = pop_est_df[f'ct{census_year}'].astype(str) + '-' + pop_est_df['county_fip']
                    
     # picking which denoms to include
     denom_list = [code for code in (total_pop_code, total_house_code) if code is not None]
@@ -688,8 +688,9 @@ def _estimates_by_geography(acs_year, demo_dict, geo, pop_est_df, variance_df, t
     boundary_ext = f'_{boundary_year}' if (boundary_year) and (geo == 'councildist') else ''
     
     # setting path
-    data_path = files("councilcount").joinpath("data") # setting path
-    file_path = f'{data_path}/{geo}{boundary_ext}-boundaries.geojson'
+    file_path = f'{DATA_PATH}/{geo}{boundary_ext}-boundaries.geojson'
+    if geo in ["assembly district", "congressional district"]:
+        file_path = f'{DATA_PATH}/{geo}-nyc-wide.geojson'
     
     # load GeoJSON file for geographic boundaries
     with open(file_path) as f:
@@ -751,13 +752,8 @@ def available_years():
 
     """
 
-    # get the data directory where the data is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # construct the path to the data folder
-    data_path = os.path.join(script_dir, "data")
-
     # find years available for new estimates (also years available for BBL-level population estimates)
-    bbl_file_names = [f for f in os.listdir(data_path) if "bbl-population-estimates_" in f]
+    bbl_file_names = [f for f in os.listdir(DATA_PATH) if "bbl-population-estimates_" in f]
     bbl_years = sorted([name[25:29] for name in bbl_file_names])
     bbl_acs_years = [f'{int(year)-4}-{year}' for year in bbl_years]
     bbl_acs_list = ', '.join(bbl_acs_years) # for ACS 5-Year surveys
@@ -877,10 +873,8 @@ def get_available_councilcount_codes(acs_year=None):
 #     # construct the path to the data folder
 #     data_path = os.path.join(script_dir, "data")
 
-    data_path = files("councilcount").joinpath("data")
-
     # find all the available years
-    csv_names = [f for f in os.listdir(data_path) if f.endswith(".csv")]
+    csv_names = [f for f in os.listdir(DATA_PATH) if f.endswith(".csv")]
     dictionary_csv_names = [name for name in csv_names if "data_dictionary" in name]
     dictionary_years = [int(name[16:20]) for name in dictionary_csv_names]
 
@@ -901,7 +895,7 @@ def get_available_councilcount_codes(acs_year=None):
     dict_name = f"data_dictionary_{acs_year}.csv"
 
     # retrieve the data dictionary
-    file_path = f'{data_path}/{dict_name}'
+    file_path = f'{DATA_PATH}/{dict_name}'
     df = pd.read_csv(file_path)
 
     print(f"Printing data dictionary for the {acs_year} 5-Year ACS")
@@ -939,13 +933,8 @@ def get_bbl_population_estimates(year=None):
 
     if year: year = int(year) # consistent dtype
 
-    # get the data directory where the data is located
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    # construct the path to the data folder
-    data_path = os.path.join(script_dir, "data")
-
     # find all available years
-    bbl_file_names = [f for f in os.listdir(data_path) if "bbl-population-estimates_" in f]
+    bbl_file_names = [f for f in os.listdir(DATA_PATH) if "bbl-population-estimates_" in f]
     bbl_years = [int(name[25:29]) for name in bbl_file_names]
 
     # if year is not chosen, set default to latest year
@@ -967,7 +956,7 @@ def get_bbl_population_estimates(year=None):
     print(f"Printing BBL population estimates for {year}")
 
     # retrieve the dataset
-    file_path = f'{data_path}/{bbl_name}'
+    file_path = f'{DATA_PATH}/{bbl_name}'
     df = pd.read_csv(file_path)
     
     return df[['borough', 'block', 'lot', 'latitude', 'longitude','bbl_population_estimate']]
@@ -1037,12 +1026,9 @@ def generate_new_estimates(survey_key, acs_year, demo_dict, geo, census_api_key,
     # consistent dtypes
     if acs_year: acs_year = int(acs_year) 
     if boundary_year: boundary_year = int(boundary_year)
-    
-    # setting path
-    data_path = files("councilcount").joinpath("data") # setting path
 
     # locate available CSV files
-    file_names = os.listdir(data_path)
+    file_names = os.listdir(DATA_PATH)
     
     # record available geos
     geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
@@ -1080,10 +1066,10 @@ def generate_new_estimates(survey_key, acs_year, demo_dict, geo, census_api_key,
         warn("`boundary_year` is only relevant for `geo = councildist`. Ignoring `boundary_year` input.")
 
     # selections for which estimates must be created using the Data Team's methodology    
-    if (geo in ['councildist','schooldist','policeprct','communitydist']) or ((geo in ['nta', 'modzcta']) and (acs_year < 2021)):        
+    if (geo in ['councildist','schooldist','policeprct','communitydist','assembly district','congressional district']) or ((geo in ['nta', 'modzcta']) and (acs_year < 2021)):        
         
         # generating blank BBL-level population estimates df
-        blank_pop_est_df = pd.read_csv(f'{data_path}/bbl-population-estimates_{acs_year}.csv')
+        blank_pop_est_df = pd.read_csv(f'{DATA_PATH}/puma-bbl-population-estimates_{acs_year}.csv')
 
         # adding columns for BBL-level demographic estimates
         pop_est_df = _generate_bbl_estimates(survey_key, acs_year, demo_dict, blank_pop_est_df, census_api_key, total_pop_code, total_house_code)
@@ -1120,6 +1106,34 @@ def generate_new_estimates(survey_key, acs_year, demo_dict, geo, census_api_key,
     return cleaned_geo_df
 
 #
+
+API_KEY =  "f15e9a7a298d1c9306f8a2f4a2ca99e1476247fc" # Update as necessary
+
+
+dict1 = {'B08201_007E': 'household', 'B08201_013E': 'household', 'B08201_019E': 'household', 'B08201_025E': 'household'}
+
+dict2 = {'DP02_0014E': 'household', 'DP02_0015E': 'household', 'DP04_0110E': 'household', 'DP04_0136E': 'household', 'DP05_0002E': 'person', 
+ 'DP05_0003E': 'person', 'DP05_0005E': 'person', 'DP05_0006E': 'person', 'DP05_0007E': 'person', 'DP05_0008E': 'person', 
+ 'DP05_0009E': 'person', 'DP05_0010E': 'person', 'DP05_0011E': 'person', 'DP05_0012E': 'person', 'DP05_0013E': 'person', 
+ 'DP05_0014E': 'person', 'DP05_0015E': 'person', 'DP05_0016E': 'person', 'DP05_0017E': 'person', 'DP05_0035E': 'person'} 
+ 
+dict3 = {'DP05_0037E': 'person', 'DP05_0038E': 'person', 'DP05_0039E': 'person', 'DP05_0044E': 'person', 'DP05_0052E': 'person', 
+ 'DP05_0057E': 'person', 'DP05_0071E': 'person', 'DP05_0076E': 'person', 'DP05_0077E': 'person', 'DP05_0078E': 'person', 
+ 'DP05_0079E': 'person', 'DP05_0080E': 'person', 'DP05_0081E': 'person', 'DP05_0082E': 'person', 'DP05_0083E': 'person'}
+
+assembly_ests1 = generate_new_estimates('1', 2020, dict1, "assembly district", API_KEY, total_pop_code="B01001_001E", total_house_code="B19001_001E")
+assembly_ests2 = generate_new_estimates('2', 2020, dict2, "assembly district", API_KEY, total_pop_code="DP05_0001E", total_house_code="DP02_0001E")
+assembly_ests3 = generate_new_estimates('2', 2020, dict3, "assembly district", API_KEY, total_pop_code="DP05_0001E", total_house_code="DP02_0001E")
+assembly_ests = assembly_ests1.merge(assembly_ests2, on = "assembly district")
+assembly_ests = assembly_ests.merge(assembly_ests3, on = "assembly district")
+assembly_ests.to_csv("assembly district-geographies_acs_2020.csv", index = False)
+
+congress_ests1 = generate_new_estimates('1', 2020, dict1, "congressional district", API_KEY, total_pop_code="B01001_001E", total_house_code="B19001_001E")
+congress_ests2 = generate_new_estimates('2', 2020, dict2, "congressional district", API_KEY, total_pop_code="DP05_0001E", total_house_code="DP02_0001E")
+congress_ests3 = generate_new_estimates('2', 2020, dict3, "congressional district", API_KEY, total_pop_code="DP05_0001E", total_house_code="DP02_0001E")
+congress_ests = congress_ests1.merge(congress_ests2, on = "congressional district")
+congress_ests = congress_ests.merge(congress_ests3, on = "congressional district")
+congress_ests.to_csv("congressional district-geographies_acs_2020.csv", index = False)
 
 def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=None):
     
@@ -1161,11 +1175,9 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
     # consistent dtypes
     if acs_year: acs_year = int(acs_year) 
     if boundary_year: boundary_year = int(boundary_year)
-
-    data_path = files("councilcount").joinpath("data")
     
     # locate available CSV files
-    file_names = os.listdir(data_path)
+    file_names = os.listdir(DATA_PATH)
     geo_file_names = [f for f in file_names if "geographies" in f or "nyc-wide" in f]
     geo_names = list(set([f.split('-')[0] for f in geo_file_names]))
     # cleaning names to allign with input options
@@ -1189,10 +1201,10 @@ def get_councilcount_estimates(acs_year, geo, var_codes="all", boundary_year=Non
 
         # building paths
         if geo == 'city':
-            file_path = f'{data_path}/nyc-wide_estimates_{acs_year}.csv'
+            file_path = f'{DATA_PATH}/nyc-wide_estimates_{acs_year}.csv'
             # geo_df = pd.read_csv(file_path)
         else:
-            file_path = f'{data_path}/{geo}{add_boundary_year}-geographies_{acs_year}.csv'#.geojson'
+            file_path = f'{DATA_PATH}/{geo}{add_boundary_year}-geographies_{acs_year}.csv'#.geojson'
 
         geo_df = pd.read_csv(file_path)
             
